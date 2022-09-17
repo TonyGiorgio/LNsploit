@@ -1,5 +1,4 @@
-pub type NodeList = Vec<Node>;
-
+#[derive(Clone)]
 pub struct Node {
     pub name: String,
 }
