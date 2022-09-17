@@ -39,11 +39,17 @@ impl Screen for NodesListScreen {
             self.cached_nodes = self.node_manager.clone().lock().await.list_nodes().await;
             self.refresh_list = false
         }
-        let items = self
+
+        // The first item in the list is a "[New Node]" action
+        // Kind of a hack though
+        let mut items = vec![ListItem::new("[New Node]")];
+        let node_items = self
             .cached_nodes
             .iter()
             .map(|n| ListItem::new(n.name.clone()))
             .collect::<Vec<ListItem>>();
+        items.append(&mut node_items.clone());
+
         let list = List::new(items)
             .block(Block::default().title("Nodes").borders(Borders::ALL))
             .style(Style::default().fg(Color::White))
@@ -57,24 +63,34 @@ impl Screen for NodesListScreen {
     async fn handle_input(&mut self, event: Event) -> Result<()> {
         if let Event::Input(event) = event {
             let selected = self.state.selected().unwrap_or(0);
-            let selected = match event.code {
+            let list_items = self.cached_nodes.len() + 1; // + 1 for the [New Node] action
+
+            match event.code {
+                KeyCode::Enter => {
+                    if selected == 0 {
+                        // This is the [New Node] action, go to the new node screen
+                        // TODO
+                    } else {
+                        // selected a certain node, go to the node screen
+                        // TODO
+                    }
+                }
                 KeyCode::Up => {
                     if selected == 0 {
-                        self.cached_nodes.len() - 1
+                        self.state.select(Some(list_items - 1));
                     } else {
-                        selected - 1
+                        self.state.select(Some(selected - 1));
                     }
                 }
                 KeyCode::Down => {
-                    if selected == self.cached_nodes.len() - 1 {
-                        0
+                    if selected == list_items - 1 {
+                        self.state.select(Some(0));
                     } else {
-                        selected + 1
+                        self.state.select(Some(selected + 1));
                     }
                 }
-                _ => 0,
+                _ => (),
             };
-            self.state.select(Some(selected));
         }
 
         Ok(())
