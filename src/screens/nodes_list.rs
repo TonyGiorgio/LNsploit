@@ -1,4 +1,4 @@
-use crate::models::NodeManager;
+use crate::models::{Node, NodeManager};
 
 use super::{Event, Screen, ScreenFrame};
 use anyhow::Result;
@@ -14,6 +14,8 @@ use tui::{
 pub struct NodesListScreen {
     node_manager: Arc<Mutex<NodeManager>>,
     state: ListState,
+    refresh_list: bool,
+    cached_nodes: Vec<Node>,
 }
 
 impl NodesListScreen {
@@ -24,6 +26,8 @@ impl NodesListScreen {
         Self {
             node_manager,
             state,
+            refresh_list: true,
+            cached_nodes: vec![],
         }
     }
 }
@@ -31,8 +35,12 @@ impl NodesListScreen {
 #[async_trait]
 impl Screen for NodesListScreen {
     async fn paint(&mut self, frame: &mut ScreenFrame) {
-        let nodes = self.node_manager.clone().lock().await.list_nodes().await;
-        let items = nodes
+        if self.refresh_list {
+            self.cached_nodes = self.node_manager.clone().lock().await.list_nodes().await;
+            self.refresh_list = false
+        }
+        let items = self
+            .cached_nodes
             .iter()
             .map(|n| ListItem::new(n.name.clone()))
             .collect::<Vec<ListItem>>();
@@ -49,17 +57,16 @@ impl Screen for NodesListScreen {
     async fn handle_input(&mut self, event: Event) -> Result<()> {
         if let Event::Input(event) = event {
             let selected = self.state.selected().unwrap_or(0);
-            let nodes = self.node_manager.clone().lock().await.list_nodes().await;
             let selected = match event.code {
                 KeyCode::Up => {
                     if selected == 0 {
-                        nodes.len() - 1
+                        self.cached_nodes.len() - 1
                     } else {
                         selected - 1
                     }
                 }
                 KeyCode::Down => {
-                    if selected == nodes.len() - 1 {
+                    if selected == self.cached_nodes.len() - 1 {
                         0
                     } else {
                         selected + 1
