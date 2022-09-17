@@ -21,9 +21,9 @@ pub struct Application {
 }
 
 impl Application {
-    pub fn new() -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         let term = setup_terminal()?;
-        let node_manager = NodeManager::new();
+        let node_manager = NodeManager::new().await;
 
         Ok(Self {
             term,

@@ -9,26 +9,24 @@ pub struct NodeManager {
 }
 
 impl NodeManager {
-    pub fn new() -> Self {
-        let nodes = vec![
-            Node {
-                name: String::from("node 1"),
-            },
-            Node {
-                name: String::from("node 2"),
-            },
-            Node {
-                name: String::from("node 3"),
-            },
-        ];
+    pub async fn new() -> Self {
+        let mut node_manager = Self {
+            nodes: Arc::new(Mutex::new(vec![])),
+        };
 
-        Self {
-            nodes: Arc::new(Mutex::new(nodes)),
-        }
+        // TODO remove, temporary
+        node_manager.new_node(String::from("node 1")).await;
+        node_manager.new_node(String::from("node 2")).await;
+        node_manager.new_node(String::from("node 3")).await;
+
+        node_manager
     }
 
     pub async fn list_nodes(&mut self) -> Vec<Node> {
-        let getter = self.nodes.lock().await;
-        getter.clone().into_iter().collect()
+        self.nodes.lock().await.clone().into_iter().collect()
+    }
+
+    pub async fn new_node(&mut self, name: String) {
+        self.nodes.lock().await.push(Node::new(name));
     }
 }
