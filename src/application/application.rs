@@ -1,4 +1,3 @@
-use crate::models::Node;
 use crate::screens::{Event, NodesListScreen, Screen};
 use anyhow::Result;
 use crossterm::{
@@ -6,45 +5,45 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use futures::executor::block_on;
 use std::io::{self, Stdout};
 use std::sync::mpsc::{self, Receiver};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 use tui::{backend::CrosstermBackend, Terminal};
+
+use crate::models::NodeManager;
 
 pub struct Application {
     term: Terminal<CrosstermBackend<Stdout>>,
+    node_manager: Arc<Mutex<NodeManager>>,
 }
 
 impl Application {
-    pub fn new() -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         let term = setup_terminal()?;
+        let node_manager = NodeManager::new().await;
 
-        Ok(Self { term })
+        Ok(Self {
+            term,
+            node_manager: Arc::new(Mutex::new(node_manager)),
+        })
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        let nodes = vec![
-            Node {
-                name: String::from("node 1"),
-            },
-            Node {
-                name: String::from("node 2"),
-            },
-            Node {
-                name: String::from("node 3"),
-            },
-        ];
-        let mut screen = NodesListScreen::new(nodes);
+        let mut screen = NodesListScreen::new(self.node_manager.clone());
         let inputs = self.init_event_channel()?;
 
         loop {
             self.term.draw(|f| {
-                screen.paint(f);
+                let paint_future = screen.paint(f);
+                block_on(paint_future);
             })?;
 
             match inputs.recv()? {
                 Event::Quit => return Ok(()),
-                event => screen.handle_input(event)?,
+                event => screen.handle_input(event).await?,
             }
         }
     }

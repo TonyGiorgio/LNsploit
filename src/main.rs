@@ -7,7 +7,7 @@ use application::Application;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut app = Application::new()?;
+    let mut app = Application::new().await?;
 
     if let Err(e) = app.run().await {
         println!("error starting the application: {}", e);
