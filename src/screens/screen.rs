@@ -1,4 +1,5 @@
-use super::Event;
+use super::AppEvent;
+use crate::router::Action;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::io::Stdout;
@@ -9,5 +10,5 @@ pub type ScreenFrame<'a> = Frame<'a, CrosstermBackend<Stdout>>;
 #[async_trait]
 pub trait Screen {
     async fn paint(&mut self, frame: &mut ScreenFrame);
-    async fn handle_input(&mut self, event: Event) -> Result<()>;
+    async fn handle_input(&mut self, event: AppEvent) -> Result<Option<Action>>;
 }
