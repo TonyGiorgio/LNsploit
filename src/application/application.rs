@@ -1,5 +1,7 @@
-use crate::screens::{Event, NodesListScreen, Screen};
-use anyhow::Result;
+use crate::models::NodeManager;
+use crate::router::{Action, Router};
+use crate::screens::{AppEvent, HomeScreen, Screen};
+use anyhow::{anyhow, Result};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event as CEvent, KeyCode},
     execute,
@@ -7,48 +9,67 @@ use crossterm::{
 };
 use futures::executor::block_on;
 use std::io::{self, Stdout};
-use std::sync::mpsc::{self, Receiver};
-use std::sync::Arc;
+use std::sync::{
+    mpsc::{self, Receiver},
+    Arc,
+};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tui::{backend::CrosstermBackend, Terminal};
 
-use crate::models::NodeManager;
-
 pub struct Application {
     term: Terminal<CrosstermBackend<Stdout>>,
-    node_manager: Arc<Mutex<NodeManager>>,
+    current_screen: Box<dyn Screen>,
+    router: Router,
 }
 
 impl Application {
     pub async fn new() -> Result<Self> {
         let term = setup_terminal()?;
+
         let node_manager = NodeManager::new().await;
+        let node_manager = Arc::new(Mutex::new(node_manager));
+
+        let current_screen = HomeScreen::new();
+        let router = Router::new(node_manager.clone());
 
         Ok(Self {
             term,
-            node_manager: Arc::new(Mutex::new(node_manager)),
+            router,
+            current_screen: Box::new(current_screen),
         })
     }
 
-    pub async fn run(&mut self) -> Result<()> {
-        let mut screen = NodesListScreen::new(self.node_manager.clone());
-        let inputs = self.init_event_channel()?;
+    pub async fn run(mut self) -> Result<()> {
+        let inputs = match self.init_event_channel() {
+            Ok(inputs) => inputs,
+            Err(err) => return self.close().or(Err(err)),
+        };
 
         loop {
             self.term.draw(|f| {
-                let paint_future = screen.paint(f);
+                let paint_future = self.current_screen.paint(f);
                 block_on(paint_future);
             })?;
 
-            match inputs.recv()? {
-                Event::Quit => return Ok(()),
-                event => screen.handle_input(event).await?,
+            let screen_event = match inputs.recv() {
+                Ok(event) => match event {
+                    AppEvent::Quit => break,
+                    AppEvent::Back => Some(Action::Pop),
+                    event => self.current_screen.handle_input(event).await?,
+                },
+                Err(err) => return self.close().or(Err(anyhow!(err))),
+            };
+
+            if let Some(event) = screen_event {
+                self.current_screen = self.router.go_to(event, self.current_screen);
             }
         }
+
+        self.close()
     }
 
-    fn init_event_channel(&self) -> Result<Receiver<Event>> {
+    fn init_event_channel(&self) -> Result<Receiver<AppEvent>> {
         let (tx, rx) = mpsc::channel();
         let tick_rate = Duration::from_millis(400);
 
@@ -62,8 +83,9 @@ impl Application {
                 if event::poll(timeout).expect("poll works") {
                     if let CEvent::Key(key) = event::read().expect("can read events") {
                         let (app_event, exit) = match key.code {
-                            KeyCode::Char('q') => (Event::Quit, true),
-                            _ => (Event::Input(key), false),
+                            KeyCode::Char('q') => (AppEvent::Quit, true),
+                            KeyCode::Esc => (AppEvent::Back, false),
+                            _ => (AppEvent::Input(key), false),
                         };
                         tx.send(app_event).expect("can send events");
                         if exit {
@@ -73,7 +95,7 @@ impl Application {
                 }
 
                 if last_tick.elapsed() >= tick_rate {
-                    if let Ok(_) = tx.send(Event::Tick) {
+                    if let Ok(_) = tx.send(AppEvent::Tick) {
                         last_tick = Instant::now();
                     }
                 }
@@ -83,7 +105,7 @@ impl Application {
         Ok(rx)
     }
 
-    pub fn close(self) -> Result<()> {
+    fn close(self) -> Result<()> {
         teardown_terminal(self.term)?;
 
         Ok(())

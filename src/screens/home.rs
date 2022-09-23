@@ -1,57 +1,53 @@
 use super::{AppEvent, Screen, ScreenFrame};
-use crate::models::{Node, NodeManager};
-use crate::router::Action;
+use crate::router::{Action, Location};
 use anyhow::Result;
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tui::{
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, List, ListItem, ListState},
 };
 
-pub struct NodesListScreen {
-    node_manager: Arc<Mutex<NodeManager>>,
+pub struct HomeScreen {
     state: ListState,
-    refresh_list: bool,
-    cached_nodes: Vec<Node>,
+    nav_list: Vec<String>,
 }
 
-impl NodesListScreen {
-    pub fn new(node_manager: Arc<Mutex<NodeManager>>) -> Self {
+impl HomeScreen {
+    pub fn new() -> Self {
         let mut state = ListState::default();
         state.select(Some(0));
 
         Self {
-            node_manager,
             state,
-            refresh_list: true,
-            cached_nodes: vec![],
+            nav_list: vec!["Nodes".into()],
         }
+    }
+
+    fn handle_enter(&self) -> Option<Action> {
+        let selected = self.state.selected().unwrap_or(0);
+        let item = self.nav_list[selected].as_str();
+
+        let action = match item {
+            "Nodes" => Action::Push(Location::NodesList),
+            _ => return None,
+        };
+
+        Some(action)
     }
 }
 
 #[async_trait]
-impl Screen for NodesListScreen {
+impl Screen for HomeScreen {
     async fn paint(&mut self, frame: &mut ScreenFrame) {
-        if self.refresh_list {
-            self.cached_nodes = self.node_manager.clone().lock().await.list_nodes().await;
-            self.refresh_list = false
-        }
-
-        // The first item in the list is a "[New Node]" action
-        // Kind of a hack though
-        let mut items = vec![ListItem::new("[New Node]")];
-        let node_items = self
-            .cached_nodes
+        let items = self
+            .nav_list
             .iter()
-            .map(|n| ListItem::new(n.name.clone()))
+            .map(|n| ListItem::new(n.clone()))
             .collect::<Vec<ListItem>>();
-        items.append(&mut node_items.clone());
 
         let list = List::new(items)
-            .block(Block::default().title("Nodes").borders(Borders::ALL))
+            .block(Block::default().title("Home").borders(Borders::ALL))
             .style(Style::default().fg(Color::White))
             .highlight_style(Style::default().add_modifier(Modifier::ITALIC))
             .highlight_symbol(">>");
@@ -63,18 +59,10 @@ impl Screen for NodesListScreen {
     async fn handle_input(&mut self, event: AppEvent) -> Result<Option<Action>> {
         if let AppEvent::Input(event) = event {
             let selected = self.state.selected().unwrap_or(0);
-            let list_items = self.cached_nodes.len() + 1; // + 1 for the [New Node] action
+            let list_items = self.nav_list.len();
 
             match event.code {
-                KeyCode::Enter => {
-                    if selected == 0 {
-                        // This is the [New Node] action, go to the new node screen
-                        // TODO
-                    } else {
-                        // selected a certain node, go to the node screen
-                        // TODO
-                    }
-                }
+                KeyCode::Enter => return Ok(self.handle_enter()),
                 KeyCode::Up => {
                     if selected == 0 {
                         self.state.select(Some(list_items - 1));
@@ -92,7 +80,6 @@ impl Screen for NodesListScreen {
                 _ => (),
             };
         }
-
         Ok(None)
     }
 }
