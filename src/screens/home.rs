@@ -47,7 +47,7 @@ impl Screen for HomeScreen {
             .collect::<Vec<ListItem>>();
 
         let list = List::new(items)
-            .block(Block::default().title("Nodes").borders(Borders::ALL))
+            .block(Block::default().title("Home").borders(Borders::ALL))
             .style(Style::default().fg(Color::White))
             .highlight_style(Style::default().add_modifier(Modifier::ITALIC))
             .highlight_symbol(">>");
