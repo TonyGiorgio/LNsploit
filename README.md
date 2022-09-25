@@ -50,6 +50,13 @@ Change the values if necessary and then run with those configs.
 cargo run local.config.yaml
 ```
 
+### Database Migrations
+
+Changing any migration data will require running the migration locally on the development machine so that rust schema.rs code can also be generated:
+
+```
+DATABASE_URL=database.db diesel migration run
+```
 
 ---
 
