@@ -5,7 +5,13 @@ mod screens;
 
 use anyhow::Result;
 use application::Application;
+use diesel::r2d2::ConnectionManager;
+use diesel::r2d2::Pool;
+use diesel::sqlite::SqliteConnection;
+use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use serde::Deserialize;
+
+pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -27,12 +33,17 @@ async fn main() -> Result<()> {
     let config: Config =
         serde_yaml::from_reader(config_file).expect("yaml config was not well formatted");
 
-    println!(
-        "loading up database connection information from config: {:?}",
-        config.db.connection
-    );
+    let manager = ConnectionManager::<SqliteConnection>::new(config.db.connection);
+    let pool = Pool::builder()
+        .test_on_check_out(true)
+        .build(manager)
+        .expect("Could not build connection pool");
+    let connection = &mut pool.get().unwrap();
+    connection
+        .run_pending_migrations(MIGRATIONS)
+        .expect("migrations could not run");
 
-    let app = Application::new().await?;
+    let app = Application::new(pool).await?;
 
     if let Err(e) = app.run().await {
         println!("error starting the application: {}", e);

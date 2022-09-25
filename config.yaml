@@ -1,2 +1,2 @@
 db:
-  connection: "sql://test"
+  connection: "database.db"

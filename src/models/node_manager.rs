@@ -1,32 +1,43 @@
+use super::NewNode;
 use super::Node;
 
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use super::schema::nodes::dsl::*;
+use diesel::prelude::*;
+use diesel::r2d2::ConnectionManager;
+use diesel::r2d2::Pool;
+use diesel::SqliteConnection;
 
-#[derive(Clone)]
 pub struct NodeManager {
-    nodes: Arc<Mutex<Vec<Node>>>,
+    db: Pool<ConnectionManager<SqliteConnection>>,
 }
 
 impl NodeManager {
-    pub async fn new() -> Self {
-        let mut node_manager = Self {
-            nodes: Arc::new(Mutex::new(vec![])),
-        };
+    pub async fn new(db: Pool<ConnectionManager<SqliteConnection>>) -> Self {
+        let mut node_manager = Self { db };
 
-        // TODO remove, temporary
-        node_manager.new_node(String::from("node 1")).await;
-        node_manager.new_node(String::from("node 2")).await;
-        node_manager.new_node(String::from("node 3")).await;
+        // TODO do not create a new node each time it loads
+        // these now save to DB
+        node_manager.new_node(String::from("test"));
 
         node_manager
     }
 
     pub async fn list_nodes(&mut self) -> Vec<Node> {
-        self.nodes.lock().await.clone().into_iter().collect()
+        let conn = &mut self.db.get().unwrap();
+        let node_list = nodes.load::<Node>(conn).expect("Error loading nodes"); // TODO do not panic
+        node_list
     }
 
-    pub async fn new_node(&mut self, name: String) {
-        self.nodes.lock().await.push(Node::new(name));
+    pub fn new_node(&mut self, name: String) {
+        // TODO pubkey should not be passed in like this
+        let new_node = NewNode {
+            pubkey: String::as_str(&name),
+        };
+
+        let conn = &mut self.db.get().unwrap();
+        diesel::insert_into(nodes)
+            .values(&new_node)
+            .execute(conn)
+            .expect("Error saving new post"); // TODO do not panic here
     }
 }

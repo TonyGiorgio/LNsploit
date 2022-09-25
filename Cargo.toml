@@ -13,3 +13,5 @@ async-trait = "0.1.57"
 futures = "0.3.24"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
+diesel = { version = "2.0", features = ["sqlite", "r2d2"] }
+diesel_migrations = "2.0.0"

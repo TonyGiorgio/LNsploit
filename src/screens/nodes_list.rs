@@ -46,7 +46,7 @@ impl Screen for NodesListScreen {
         let node_items = self
             .cached_nodes
             .iter()
-            .map(|n| ListItem::new(n.name.clone()))
+            .map(|n| ListItem::new(n.pubkey.clone()))
             .collect::<Vec<ListItem>>();
         items.append(&mut node_items.clone());
 

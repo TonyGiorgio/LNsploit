@@ -1,10 +1,14 @@
-#[derive(Clone)]
+use super::schema::nodes;
+use diesel::prelude::*;
+
+#[derive(Queryable)]
 pub struct Node {
-    pub name: String,
+    pub id: i32,
+    pub pubkey: String,
 }
 
-impl Node {
-    pub fn new(name: String) -> Self {
-        Self { name }
-    }
+#[derive(Insertable)]
+#[diesel(table_name = nodes)]
+pub struct NewNode<'a> {
+    pub pubkey: &'a str,
 }
