@@ -2,7 +2,7 @@
 
 diesel::table! {
     nodes (id) {
-        id -> Integer,
+        id -> Text,
         pubkey -> Text,
     }
 }

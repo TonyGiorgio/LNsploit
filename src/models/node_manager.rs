@@ -6,6 +6,7 @@ use diesel::prelude::*;
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use diesel::SqliteConnection;
+use uuid::Uuid;
 
 pub struct NodeManager {
     db: Pool<ConnectionManager<SqliteConnection>>,
@@ -30,8 +31,10 @@ impl NodeManager {
 
     pub fn new_node(&mut self, name: String) {
         // TODO pubkey should not be passed in like this
+        let node_id = Uuid::new_v4().to_string();
         let new_node = NewNode {
-            pubkey: String::as_str(&name),
+            id: String::as_str(&node_id),
+            pubkey: name.as_str(),
         };
 
         let conn = &mut self.db.get().unwrap();
