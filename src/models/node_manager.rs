@@ -2,11 +2,12 @@ use super::{MasterKey, NewMasterKey, NewNode, Node};
 
 use super::schema::master_keys::dsl::*;
 use super::schema::nodes::dsl::*;
-use bip39::Mnemonic;
+use bip32::Mnemonic;
 use diesel::prelude::*;
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use diesel::SqliteConnection;
+use rand_core::OsRng;
 use uuid::Uuid;
 
 pub struct NodeManager {
@@ -60,13 +61,12 @@ impl NodeManager {
         }
 
         // if no master keys, create one
-        let mnemonic_key = Mnemonic::generate(24).expect("could not create random mnemonic");
+        let mnemonic_key = Mnemonic::random(&mut OsRng, Default::default());
         let master_key_id = Uuid::new_v4().to_string();
-        let phrase = mnemonic_key.to_string();
         let new_master_key = NewMasterKey {
             id: String::as_str(&master_key_id),
-            seed: mnemonic_key.to_seed("").to_vec(),
-            mnemonic: String::as_str(&phrase),
+            seed: mnemonic_key.to_seed("").as_bytes().to_vec(),
+            mnemonic: mnemonic_key.phrase(),
         };
         diesel::insert_into(master_keys)
             .values(&new_master_key)
