@@ -5,6 +5,7 @@ use diesel::prelude::*;
 pub struct Node {
     pub id: String,
     pub pubkey: String,
+    pub key_id: String,
 }
 
 #[derive(Insertable, Default)]
@@ -12,4 +13,5 @@ pub struct Node {
 pub struct NewNode<'a> {
     pub id: &'a str,
     pub pubkey: &'a str,
+    pub key_id: &'a str,
 }

@@ -1,8 +1,3 @@
-CREATE TABLE nodes (
-  id CHAR(36) PRIMARY KEY NOT NULL,
-  pubkey VARCHAR NOT NULL
-);
-
 CREATE TABLE master_keys (
   id CHAR(36) PRIMARY KEY NOT NULL,
   seed BLOB NOT NULL,
@@ -11,7 +6,14 @@ CREATE TABLE master_keys (
 
 CREATE TABLE node_keys (
   id CHAR(36) PRIMARY KEY NOT NULL,
-  key_id CHAR(36) NOT NULL REFERENCES master_keys(id),
-  node_id CHAR(36) NOT NULL REFERENCES nodes(id),
-  UNIQUE(node_id)
+  master_key_id CHAR(36) NOT NULL REFERENCES master_keys(id),
+  child_index INTEGER NOT NULL,
+  UNIQUE(child_index)
 );
+
+CREATE TABLE nodes (
+  id CHAR(36) PRIMARY KEY NOT NULL,
+  pubkey VARCHAR NOT NULL,
+  key_id CHAR(36) NOT NULL REFERENCES node_keys(id)
+);
+
