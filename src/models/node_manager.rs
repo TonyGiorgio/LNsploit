@@ -1,30 +1,34 @@
-use super::{MasterKey, NewMasterKey, NewNode, NewNodeKey, Node, NodeKey};
-
 use super::schema::master_keys::dsl::*;
 use super::schema::node_keys::dsl::*;
 use super::schema::nodes::dsl::*;
+use super::{MasterKey, NewMasterKey, NewNode, NewNodeKey, Node, NodeKey, RunnableNode};
 use bip32::Mnemonic;
 use diesel::prelude::*;
-use diesel::r2d2::ConnectionManager;
-use diesel::r2d2::Pool;
+use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::SqliteConnection;
 use rand_core::OsRng;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 pub struct NodeManager {
     db: Pool<ConnectionManager<SqliteConnection>>,
+    nodes: Arc<Mutex<Vec<RunnableNode>>>,
 }
 
 impl NodeManager {
     pub async fn new(db: Pool<ConnectionManager<SqliteConnection>>) -> Self {
-        let mut node_manager = Self { db };
+        let mut node_manager = Self {
+            db,
+            nodes: Arc::new(Mutex::new(vec![])),
+        };
 
         // check to make sure at least one master key has been initialized
         node_manager.check_keys();
 
         // TODO do not create a new node each time it loads
         // these now save to DB
-        node_manager.new_node(String::from("test"));
+        let _create_node_res = node_manager.new_node(String::from("test")).await;
 
         node_manager
     }
@@ -35,7 +39,7 @@ impl NodeManager {
         node_list
     }
 
-    pub fn new_node(&mut self, name: String) {
+    pub async fn new_node(&mut self, name: String) -> Result<(), Box<dyn std::error::Error>> {
         let conn = &mut self.db.get().unwrap();
 
         // First get the last child index that was used to create a node
@@ -82,6 +86,17 @@ impl NodeManager {
             .values(&new_node)
             .execute(conn)
             .expect("Error saving new node"); // TODO do not panic here
+
+        // now start the node that was created
+        let runnable_node =
+            RunnableNode::new(self.db.clone(), new_node_id, name, new_node_key_id).await;
+        match runnable_node {
+            Ok(runnable_node) => {
+                self.nodes.lock().await.push(runnable_node);
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
     }
 
     /// check_keys will check that a master key has been set up
