@@ -88,8 +88,7 @@ impl NodeManager {
             .expect("Error saving new node"); // TODO do not panic here
 
         // now start the node that was created
-        let runnable_node =
-            RunnableNode::new(self.db.clone(), new_node_id, name, new_node_key_id).await;
+        let runnable_node = RunnableNode::new(self.db.clone(), new_node_id, name, new_node_key_id);
         match runnable_node {
             Ok(runnable_node) => {
                 self.nodes.lock().await.push(runnable_node);
