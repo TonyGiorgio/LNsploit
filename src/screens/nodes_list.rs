@@ -69,7 +69,9 @@ impl Screen for NodesListScreen {
                 KeyCode::Enter => {
                     if selected == 0 {
                         // This is the [New Node] action, go to the new node screen
-                        // TODO
+                        let _ = self.node_manager.clone().lock().await.new_node().await;
+                        // TODO consider an error screen if an error exists
+                        self.refresh_list = true;
                     } else {
                         // selected a certain node, go to the node screen
                         // TODO

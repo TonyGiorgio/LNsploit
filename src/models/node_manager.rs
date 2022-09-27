@@ -26,10 +26,6 @@ impl NodeManager {
         // check to make sure at least one master key has been initialized
         node_manager.check_keys();
 
-        // TODO do not create a new node each time it loads
-        // these now save to DB
-        let _create_node_res = node_manager.new_node().await;
-
         node_manager
     }
 
