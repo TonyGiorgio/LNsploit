@@ -34,6 +34,31 @@ A Lightning Network exploit toolkit.
   - Probe for unannounced channels
   - Known CVE's on old versions of implementations
 
+## Development
+
+### Running
+
+Copy the default config provided in this repo.
+
+```
+cp config.yaml local.config.yaml
+```
+
+Change the values if necessary and then run with those configs.
+
+```
+cargo run local.config.yaml
+```
+
+### Database Migrations
+
+Changing any migration data will require running the migration locally on the development machine so that rust schema.rs code can also be generated:
+
+```
+DATABASE_URL=database.db diesel migration run
+```
+
+---
 
 # Pages
 

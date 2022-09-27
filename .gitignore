@@ -1,1 +1,4 @@
 /target
+
+local.config.yaml
+database.db

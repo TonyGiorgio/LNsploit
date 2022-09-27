@@ -7,6 +7,9 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use diesel::r2d2::ConnectionManager;
+use diesel::r2d2::Pool;
+use diesel::SqliteConnection;
 use futures::executor::block_on;
 use std::io::{self, Stdout};
 use std::sync::{
@@ -24,10 +27,10 @@ pub struct Application {
 }
 
 impl Application {
-    pub async fn new() -> Result<Self> {
+    pub async fn new(db: Pool<ConnectionManager<SqliteConnection>>) -> Result<Self> {
         let term = setup_terminal()?;
 
-        let node_manager = NodeManager::new().await;
+        let node_manager = NodeManager::new(db.clone()).await;
         let node_manager = Arc::new(Mutex::new(node_manager));
 
         let current_screen = HomeScreen::new();
