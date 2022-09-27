@@ -28,7 +28,7 @@ impl NodeManager {
 
         // TODO do not create a new node each time it loads
         // these now save to DB
-        let _create_node_res = node_manager.new_node(String::from("test")).await;
+        let _create_node_res = node_manager.new_node().await;
 
         node_manager
     }
@@ -39,7 +39,7 @@ impl NodeManager {
         node_list
     }
 
-    pub async fn new_node(&mut self, name: String) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn new_node(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let conn = &mut self.db.get().unwrap();
 
         // First get the last child index that was used to create a node
@@ -77,25 +77,26 @@ impl NodeManager {
 
         // create the new node
         let new_node_id = Uuid::new_v4().to_string();
+        let runnable_node = RunnableNode::new(
+            self.db.clone(),
+            new_node_id.clone(),
+            new_node_key_id.clone(),
+        )?;
+
         let new_node = NewNode {
             id: String::as_str(&new_node_id),
-            pubkey: name.as_str(),
+            pubkey: String::as_str(&runnable_node.pubkey),
             key_id: String::as_str(&new_node_key_id),
         };
+
         diesel::insert_into(nodes)
             .values(&new_node)
             .execute(conn)
             .expect("Error saving new node"); // TODO do not panic here
 
-        // now start the node that was created
-        let runnable_node = RunnableNode::new(self.db.clone(), new_node_id, name, new_node_key_id);
-        match runnable_node {
-            Ok(runnable_node) => {
-                self.nodes.lock().await.push(runnable_node);
-                Ok(())
-            }
-            Err(err) => Err(err),
-        }
+        self.nodes.lock().await.push(runnable_node);
+
+        Ok(())
     }
 
     /// check_keys will check that a master key has been set up

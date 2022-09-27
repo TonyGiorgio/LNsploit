@@ -3,7 +3,12 @@ use super::schema::node_keys::dsl::*;
 use super::schema::nodes;
 use super::{MasterKey, NodeKey};
 use bip32::{Mnemonic, XPrv};
+use bitcoin::secp256k1::PublicKey;
+use bitcoin::secp256k1::Secp256k1;
 use diesel::{prelude::*, r2d2::ConnectionManager, r2d2::Pool};
+use lightning::chain::keysinterface::{KeysInterface, KeysManager, Recipient};
+use std::sync::Arc;
+use std::time::SystemTime;
 
 #[derive(Queryable)]
 pub struct Node {
@@ -26,13 +31,13 @@ pub struct RunnableNode {
     pub pubkey: String,
     pub key_id: String,
     pub xpriv: XPrv,
+    pub keys_manager: Arc<KeysManager>,
 }
 
 impl RunnableNode {
     pub fn new(
         db: Pool<ConnectionManager<SqliteConnection>>,
         db_id: String,
-        pubkey: String,
         key_id: String,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let conn = &mut db.get().unwrap();
@@ -60,12 +65,32 @@ impl RunnableNode {
         let xpriv = XPrv::new(&master_mnemonic.to_seed(""))?
             .derive_child(bip32::ChildNumber(node_child_index as u32))?;
 
+        // init KeysManager
+        let current_time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap();
+        let keys_manager = Arc::new(KeysManager::new(
+            &xpriv.to_bytes(),
+            current_time.as_secs(),
+            current_time.subsec_nanos(),
+        ));
+
+        // find out the pubkey
+        let mut secp_ctx = Secp256k1::new();
+        let keys_manager_clone = keys_manager.clone();
+        secp_ctx.seeded_randomize(&keys_manager_clone.get_secure_random_bytes());
+        let our_network_key = keys_manager_clone
+            .get_node_secret(Recipient::Node)
+            .expect("cannot parse node secret");
+        let pubkey = PublicKey::from_secret_key(&secp_ctx, &our_network_key).to_string();
+
         return Ok(RunnableNode {
             db,
             db_id,
             pubkey,
             key_id,
             xpriv,
+            keys_manager,
         });
     }
 }
