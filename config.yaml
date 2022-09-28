@@ -1,2 +1,7 @@
 db:
   connection: "database.db"
+bitcoind:
+  rpc_host: "http://127.0.0.1"
+  rpc_port: 18443
+  rpc_username: "polaruser"
+  rpc_password: "polarpass"

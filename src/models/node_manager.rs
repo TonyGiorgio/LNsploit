@@ -3,6 +3,7 @@ use super::schema::node_keys::dsl::*;
 use super::schema::nodes::dsl::*;
 use super::{MasterKey, NewMasterKey, NewNode, NewNodeKey, Node, NodeKey, RunnableNode};
 use bip32::Mnemonic;
+use bitcoincore_rpc::Client;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::SqliteConnection;
@@ -14,12 +15,17 @@ use uuid::Uuid;
 pub struct NodeManager {
     db: Pool<ConnectionManager<SqliteConnection>>,
     nodes: Arc<Mutex<Vec<RunnableNode>>>,
+    bitcoind_client: Client,
 }
 
 impl NodeManager {
-    pub async fn new(db: Pool<ConnectionManager<SqliteConnection>>) -> Self {
+    pub async fn new(
+        db: Pool<ConnectionManager<SqliteConnection>>,
+        bitcoind_client: Client,
+    ) -> Self {
         let mut node_manager = Self {
             db,
+            bitcoind_client,
             nodes: Arc::new(Mutex::new(vec![])),
         };
 
