@@ -5,6 +5,7 @@ version = "0.1.0"
 
 [dependencies]
 lightning = { version = "0.0.111", features = ["max_level_trace"] }
+lightning-block-sync = { version = "0.0.111", features = [ "rpc-client" ] }
 bip32 = "0.4.0"
 bitcoin = "0.29.1"
 bitcoincore-rpc = "0.16.0"

@@ -15,13 +15,13 @@ use uuid::Uuid;
 pub struct NodeManager {
     db: Pool<ConnectionManager<SqliteConnection>>,
     nodes: Arc<Mutex<Vec<RunnableNode>>>,
-    bitcoind_client: Client,
+    bitcoind_client: Arc<Client>,
 }
 
 impl NodeManager {
     pub async fn new(
         db: Pool<ConnectionManager<SqliteConnection>>,
-        bitcoind_client: Client,
+        bitcoind_client: Arc<Client>,
     ) -> Self {
         let mut node_manager = Self {
             db,
@@ -83,6 +83,7 @@ impl NodeManager {
             self.db.clone(),
             new_node_id.clone(),
             new_node_key_id.clone(),
+            self.bitcoind_client.clone(),
         )?;
 
         let new_node = NewNode {

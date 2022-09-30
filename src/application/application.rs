@@ -34,7 +34,7 @@ impl Application {
     ) -> Result<Self> {
         let term = setup_terminal()?;
 
-        let node_manager = NodeManager::new(db.clone(), bitcoind_client).await;
+        let node_manager = NodeManager::new(db.clone(), Arc::new(bitcoind_client)).await;
         let node_manager = Arc::new(Mutex::new(node_manager));
 
         let current_screen = HomeScreen::new();

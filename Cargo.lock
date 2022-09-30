@@ -197,6 +197,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "chunked_transfer"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fff857943da45f546682664a79488be82e69e43c1a7a2307679ab9afb3a66d2e"
+
+[[package]]
 name = "const-oid"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -609,6 +615,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightning-block-sync"
+version = "0.0.111"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d1bb816be90f9b182627822ba3ed0b68cbf29315228fe54e4436fe5ad12df25"
+dependencies = [
+ "bitcoin",
+ "chunked_transfer",
+ "futures",
+ "lightning",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "lnsploit"
 version = "0.1.0"
 dependencies = [
@@ -623,6 +643,7 @@ dependencies = [
  "diesel_migrations",
  "futures",
  "lightning",
+ "lightning-block-sync",
  "rand_core",
  "secp256k1",
  "serde",
