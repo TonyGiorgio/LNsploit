@@ -58,6 +58,13 @@ Changing any migration data will require running the migration locally on the de
 DATABASE_URL=database.db diesel migration run
 ```
 
+To create a new migration file, do this:
+
+```
+diesel migration generate node_channels
+```
+
+
 ---
 
 # Pages
