@@ -35,6 +35,7 @@ pub struct NewNode<'a> {
     pub key_id: &'a str,
 }
 
+#[derive(Clone)]
 pub struct RunnableNode {
     db: Pool<ConnectionManager<SqliteConnection>>,
     pub db_id: String,
@@ -111,6 +112,7 @@ impl RunnableNode {
     }
 }
 
+#[derive(Clone)]
 pub struct LdkBitcoindClient {
     bitcoind_client: Arc<Client>,
 }

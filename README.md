@@ -98,10 +98,11 @@ _Node Management_
 ```
 _Node 1_
 - [Back]
-- Connect
+- Connect To Peer
 - List Channels
 - Invoice
 - Pay
+- New On Chain Address
 ```
 
 ### Node Connect
@@ -172,6 +173,16 @@ invoice: lnc1....
 
 - [Back]
 ```
+
+### New Address
+
+```
+_New Address_
+> bc1.....
+
+- [Back]
+```
+
 
 ## Network View
 
@@ -307,8 +318,19 @@ _Simulation Mode_
 - Configure Node A
 - Configure Node B
 - Configure Node C
+- Generate to Address
 - Start
 - Points
+```
+
+
+### Generate to Address
+
+```
+_Configure Node X_
+address: bc1...
+
+> Success/Failure!
 ```
 
 ### Configure
