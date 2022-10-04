@@ -1,6 +1,8 @@
 use super::schema::channel_managers::dsl::*;
 use super::schema::channel_updates::dsl::*;
 use super::schema::{channel_managers, channel_updates};
+use super::RunnableChannelManager;
+use bitcoin::hashes::hex::ToHex;
 use diesel::{prelude::*, r2d2::ConnectionManager, r2d2::Pool};
 
 use lightning::chain::chainmonitor;
@@ -8,6 +10,10 @@ use lightning::chain::channelmonitor::{ChannelMonitor, ChannelMonitorUpdate};
 use lightning::chain::keysinterface::Sign;
 use lightning::chain::transaction::OutPoint;
 use lightning::chain::ChannelMonitorUpdateErr;
+use lightning::util::ser::{Writeable, Writer};
+use std::io::Error;
+use std::io::{Cursor, Read, Seek, SeekFrom};
+use uuid::Uuid;
 
 #[derive(Queryable)]
 pub struct ChannelManager {
@@ -70,71 +76,144 @@ impl<ChannelSigner: Sign> chainmonitor::Persist<ChannelSigner> for NodePersister
         // save channel to SQL table
         // node_db_id, funding txid, funding index, monitor data
 
-        // anytime monitor data is written, delete the temp update data
+        let monitor_data = write_to_memory(monitor);
+        let funding_txo_txid = funding_txo.txid.to_hex();
 
-        /*
-        let filename = format!("{}_{}", funding_txo.txid.to_hex(), funding_txo.index);
-        let write_res = write_to_file(self.path_to_monitor_data(), filename, monitor)
-            .map_err(|_| chain::ChannelMonitorUpdateErr::PermanentFailure);
-        if write_res.is_err() {
-            return write_res;
+        // First detect if it already exists, then update it
+        // if it does not exist then add it
+        let conn = &mut self.db.get().unwrap();
+        let channel_manager_list = channel_managers
+            .filter(super::schema::channel_managers::node_id.eq(self.node_db_id.clone()))
+            .filter(super::schema::channel_managers::channel_tx_id.eq(funding_txo_txid.clone()))
+            .filter(super::schema::channel_managers::channel_tx_index.eq(funding_txo.index as i32))
+            .load::<ChannelManager>(conn)
+            .expect("error loading channel managers");
+        match channel_manager_list.len() {
+            0 => {
+                // no channel manager for this node & outpoint, create
+                let new_channel_manager_id = Uuid::new_v4().to_string();
+                let new_channel_manager = NewChannelManager {
+                    id: String::as_str(&new_channel_manager_id),
+                    node_id: String::as_str(&self.node_db_id),
+                    channel_tx_id: String::as_str(&funding_txo_txid),
+                    channel_tx_index: funding_txo.index as i32,
+                    channel_monitor_data: monitor_data,
+                };
+                match diesel::insert_into(channel_managers)
+                    .values(&new_channel_manager)
+                    .execute(conn)
+                {
+                    Ok(_) => (),
+                    Err(_) => return Err(ChannelMonitorUpdateErr::PermanentFailure),
+                }
+            }
+            1 => {
+                // a channel manager already exists, overwrite
+                match diesel::update(channel_managers)
+                    .filter(super::schema::channel_managers::node_id.eq(self.node_db_id.clone()))
+                    .filter(
+                        super::schema::channel_managers::channel_tx_id.eq(funding_txo_txid.clone()),
+                    )
+                    .filter(
+                        super::schema::channel_managers::channel_tx_index
+                            .eq(funding_txo.index as i32),
+                    )
+                    .set(channel_monitor_data.eq(monitor_data))
+                    .execute(conn)
+                {
+                    Ok(_) => (),
+                    Err(_) => return Err(ChannelMonitorUpdateErr::PermanentFailure),
+                }
+            }
+            _ => return Err(ChannelMonitorUpdateErr::PermanentFailure),
+        };
+
+        // anytime monitor data is written, delete the temp update data
+        match diesel::delete(
+            channel_updates
+                .filter(super::schema::channel_updates::node_id.eq(self.node_db_id.clone()))
+                .filter(super::schema::channel_updates::channel_tx_id.eq(funding_txo_txid.clone()))
+                .filter(
+                    super::schema::channel_updates::channel_tx_index.eq(funding_txo.index as i32),
+                ),
+        )
+        .execute(conn)
+        {
+            Ok(_) => Ok(()),
+            Err(_) => Err(ChannelMonitorUpdateErr::PermanentFailure),
         }
-        // anytime monitor data is written, delete the update dir
-        fs::create_dir_all(self.path_to_monitor_data_updates().clone()).unwrap();
-        fs::remove_dir_all(self.path_to_monitor_data_updates()).unwrap();
-        fs::create_dir(self.path_to_monitor_data_updates()).unwrap();
-        */
-        Ok(())
     }
 
     fn update_persisted_channel(
         &self,
-        outpoint_id: OutPoint,
+        funding_txo: OutPoint,
         update: &Option<ChannelMonitorUpdate>,
-        data: &ChannelMonitor<ChannelSigner>,
-        _update_id: chainmonitor::MonitorUpdateId,
+        monitor: &ChannelMonitor<ChannelSigner>,
+        update_id: chainmonitor::MonitorUpdateId,
     ) -> Result<(), ChannelMonitorUpdateErr> {
-        if update.is_some() {
-            // save just the update into its own table
-            // node_db_id, txid, index, update_id, update data
+        match update.is_some() {
+            true => {
+                // save just the update into its own table
+                // node_db_id, txid, index, update_id, update data
+                let conn = &mut self.db.get().unwrap();
 
-            /*
-            fs::create_dir_all(self.path_to_monitor_data_updates().clone()).unwrap();
-            let filename = format!(
-                "{}_{}_{}",
-                id.txid.to_hex(),
-                id.index,
-                update.clone().unwrap().update_id
-            );
-            write_to_file(
-                self.path_to_monitor_data_updates(),
-                filename,
-                &update.clone().unwrap(),
-            )
-            .map_err(|_| chain::ChannelMonitorUpdateErr::PermanentFailure)
-            .unwrap();
-            */
-        } else {
-            // save the entire manager for block related updates
-            //
-            // after the entire manager is saved, drop update rows associated with it, not needed
-            // anymore
-            /*
-            let filename = format!("{}_{}", id.txid.to_hex(), id.index);
-            write_to_file(self.path_to_monitor_data(), filename, data)
-                .map_err(|_| chain::ChannelMonitorUpdateErr::PermanentFailure)
-                .unwrap();
+                let monitor_data = write_to_memory(monitor);
+                let funding_txo_txid = funding_txo.txid.to_hex();
 
-            // then delete the updates file since manager includes them
-            self.chan_update_cache.write().unwrap().remove(&id);
-
-            // also delete the update dir
-
-            fs::create_dir_all(self.path_to_monitor_data_updates().clone()).unwrap();
-            fs::remove_dir_all(self.path_to_monitor_data_updates()).unwrap();
-            fs::create_dir(self.path_to_monitor_data_updates()).unwrap();
-            */
+                let new_channel_update_id = Uuid::new_v4().to_string();
+                let new_channel_update = NewChannelUpdate {
+                    id: String::as_str(&new_channel_update_id),
+                    node_id: String::as_str(&self.node_db_id),
+                    channel_tx_id: String::as_str(&funding_txo_txid),
+                    channel_tx_index: funding_txo.index as i32,
+                    channel_internal_update_id: update.clone().unwrap().update_id as i32,
+                    channel_update_data: monitor_data,
+                };
+                match diesel::insert_into(channel_updates)
+                    .values(&new_channel_update)
+                    .execute(conn)
+                {
+                    Ok(_) => Ok(()),
+                    Err(_) => Err(ChannelMonitorUpdateErr::PermanentFailure),
+                }
+            }
+            false => {
+                // save the entire manager for block related updates
+                // this behaves exactly the same as persisting a new channel
+                return self.persist_new_channel(funding_txo, monitor, update_id);
+            }
         }
-        Ok(())
     }
+}
+
+pub(crate) trait DiskWriteable {
+    fn write_to_memory<W: Writer>(&self, writer: &mut W) -> Result<(), std::io::Error>;
+}
+
+impl DiskWriteable for RunnableChannelManager {
+    fn write_to_memory<W: Writer>(&self, writer: &mut W) -> Result<(), Error> {
+        self.write(writer)
+    }
+}
+
+impl<Signer: Sign> DiskWriteable for ChannelMonitor<Signer> {
+    fn write_to_memory<W: Writer>(&self, writer: &mut W) -> Result<(), Error> {
+        self.write(writer)
+    }
+}
+
+impl DiskWriteable for ChannelMonitorUpdate {
+    fn write_to_memory<W: Writer>(&self, writer: &mut W) -> Result<(), Error> {
+        self.write(writer)
+    }
+}
+
+#[allow(bare_trait_objects)]
+pub(crate) fn write_to_memory<D: DiskWriteable>(data: &D) -> Vec<u8> {
+    let mut monitor_data_cursor = Cursor::new(Vec::new());
+    data.write_to_memory(&mut monitor_data_cursor).unwrap();
+    monitor_data_cursor.seek(SeekFrom::Start(0)).unwrap();
+    let mut monitor_data = Vec::new();
+    monitor_data_cursor.read_to_end(&mut monitor_data).unwrap();
+    monitor_data
 }

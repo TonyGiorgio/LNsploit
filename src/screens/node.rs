@@ -1,5 +1,5 @@
 use super::{AppEvent, Screen, ScreenFrame};
-use crate::models::{Node, NodeManager};
+use crate::models::NodeManager;
 use crate::router::Action;
 use anyhow::Result;
 use async_trait::async_trait;

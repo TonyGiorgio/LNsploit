@@ -1,7 +1,8 @@
 use super::schema::master_keys::dsl::*;
 use super::schema::node_keys::dsl::*;
 use super::schema::nodes;
-use super::{MasterKey, NodeKey};
+use super::{MasterKey, NodeKey, NodePersister};
+use crate::FilesystemLogger;
 use bip32::{Mnemonic, XPrv};
 use bitcoin::blockdata::block::Block;
 use bitcoin::blockdata::transaction::Transaction;
@@ -13,7 +14,10 @@ use bitcoincore_rpc::bitcoincore_rpc_json::EstimateMode;
 use bitcoincore_rpc::{Client, RpcApi};
 use diesel::{prelude::*, r2d2::ConnectionManager, r2d2::Pool};
 use lightning::chain::chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator};
-use lightning::chain::keysinterface::{KeysInterface, KeysManager, Recipient};
+use lightning::chain::chainmonitor;
+use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager, Recipient};
+use lightning::chain::Filter;
+use lightning::ln::channelmanager::SimpleArcChannelManager;
 use lightning_block_sync::{
     AsyncBlockSourceResult, BlockHeaderData, BlockSource, BlockSourceError,
 };
@@ -43,7 +47,9 @@ pub struct RunnableNode {
     pub key_id: String,
     pub xpriv: XPrv,
     pub keys_manager: Arc<KeysManager>,
+    pub persister: Arc<NodePersister>,
     pub ldk_bitcoind_client: LdkBitcoindClient,
+    pub logger: Arc<FilesystemLogger>,
 }
 
 impl RunnableNode {
@@ -52,6 +58,7 @@ impl RunnableNode {
         db_id: String,
         key_id: String,
         bitcoind_client: Arc<Client>,
+        logger: Arc<FilesystemLogger>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let conn = &mut db.get().unwrap();
 
@@ -100,17 +107,34 @@ impl RunnableNode {
         // init the LDK wrapper for bitcoind
         let ldk_bitcoind_client = LdkBitcoindClient { bitcoind_client };
 
+        // create the persister
+        let persister = Arc::new(NodePersister::new(db.clone(), db_id.clone()));
+
         return Ok(RunnableNode {
-            db,
-            db_id,
+            db: db.clone(),
+            db_id: db_id.clone(),
+            persister,
             pubkey,
             key_id,
             xpriv,
             keys_manager,
             ldk_bitcoind_client,
+            logger,
         });
     }
 }
+
+type ChainMonitor = chainmonitor::ChainMonitor<
+    InMemorySigner,
+    Arc<dyn Filter + Send + Sync>,
+    Arc<LdkBitcoindClient>,
+    Arc<LdkBitcoindClient>,
+    Arc<FilesystemLogger>,
+    Arc<NodePersister>,
+>;
+
+pub(crate) type RunnableChannelManager =
+    SimpleArcChannelManager<ChainMonitor, LdkBitcoindClient, LdkBitcoindClient, FilesystemLogger>;
 
 #[derive(Clone)]
 pub struct LdkBitcoindClient {
