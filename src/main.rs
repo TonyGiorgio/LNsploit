@@ -6,11 +6,15 @@ mod screens;
 use anyhow::Result;
 use application::Application;
 use bitcoincore_rpc::{Auth, Client, RpcApi};
+use chrono::Utc;
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use diesel::sqlite::SqliteConnection;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
+use lightning::util::logger::{Logger, Record};
 use serde::Deserialize;
+use std::fs;
+use std::sync::Arc;
 
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 
@@ -18,6 +22,7 @@ pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 struct Config {
     db: DbConfig,
     bitcoind: BitcoindConfig,
+    logger: LoggerConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +36,11 @@ struct BitcoindConfig {
     rpc_port: u16,
     rpc_username: String,
     rpc_password: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoggerConfig {
+    location: String,
 }
 
 #[tokio::main]
@@ -68,11 +78,53 @@ async fn main() -> Result<()> {
         .get_best_block_hash()
         .expect("could not get block from bitcoind");
 
-    let app = Application::new(pool, bitcoind_client).await?;
+    // global logger
+    let logger = Arc::new(FilesystemLogger::new(config.logger.location.clone()));
+
+    // main application
+    let app = Application::new(pool, bitcoind_client, logger).await?;
 
     if let Err(e) = app.run().await {
         println!("error starting the application: {}", e);
     };
 
     Ok(())
+}
+
+pub struct FilesystemLogger {
+    location: String,
+}
+impl FilesystemLogger {
+    pub(crate) fn new(location: String) -> Self {
+        Self { location }
+    }
+}
+impl Logger for FilesystemLogger {
+    fn log(&self, record: &Record) {
+        if record.level.to_string() != "INFO" && record.level.to_string() != "WARN" {
+            return;
+        }
+        let raw_log = record.args.to_string();
+        let log = format!(
+            "{} {:<5} [{}:{}] {}\n",
+            // Note that a "real" lightning node almost certainly does *not* want subsecond
+            // precision for message-receipt information as it makes log entries a target for
+            // deanonymization attacks. For testing, however, its quite useful.
+            Utc::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+            record.level.to_string(),
+            record.module_path,
+            record.line,
+            raw_log
+        );
+        let logs_file_path = format!("{}", self.location.clone());
+        std::io::Write::write_all(
+            &mut fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(logs_file_path)
+                .unwrap(),
+            log.as_bytes(),
+        )
+        .unwrap();
+    }
 }

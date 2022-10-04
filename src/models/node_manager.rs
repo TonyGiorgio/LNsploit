@@ -2,6 +2,7 @@ use super::schema::master_keys::dsl::*;
 use super::schema::node_keys::dsl::*;
 use super::schema::nodes::dsl::*;
 use super::{MasterKey, NewMasterKey, NewNode, NewNodeKey, Node, NodeKey, RunnableNode};
+use crate::FilesystemLogger;
 use bip32::Mnemonic;
 use bitcoincore_rpc::Client;
 use diesel::prelude::*;
@@ -16,17 +17,20 @@ pub struct NodeManager {
     db: Pool<ConnectionManager<SqliteConnection>>,
     nodes: Arc<Mutex<Vec<RunnableNode>>>,
     bitcoind_client: Arc<Client>,
+    logger: Arc<FilesystemLogger>,
 }
 
 impl NodeManager {
     pub async fn new(
         db: Pool<ConnectionManager<SqliteConnection>>,
         bitcoind_client: Arc<Client>,
+        logger: Arc<FilesystemLogger>,
     ) -> Self {
         let mut node_manager = Self {
             db,
             bitcoind_client,
             nodes: Arc::new(Mutex::new(vec![])),
+            logger,
         };
 
         // check to make sure at least one master key has been initialized
@@ -84,6 +88,7 @@ impl NodeManager {
             new_node_id.clone(),
             new_node_key_id.clone(),
             self.bitcoind_client.clone(),
+            self.logger.clone(),
         )?;
 
         let new_node = NewNode {

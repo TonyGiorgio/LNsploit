@@ -1,8 +1,10 @@
 mod home;
+mod node;
 mod nodes_list;
 mod screen;
 
 pub use home::*;
+pub use node::*;
 pub use nodes_list::*;
 pub use screen::*;
 

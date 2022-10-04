@@ -5,3 +5,5 @@ bitcoind:
   rpc_port: 18443
   rpc_username: "polaruser"
   rpc_password: "polarpass"
+logger:
+  location: .logs.txt

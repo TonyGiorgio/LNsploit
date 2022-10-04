@@ -2,3 +2,4 @@
 
 local.config.yaml
 database.db
+.logs.txt

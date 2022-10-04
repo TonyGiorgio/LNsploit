@@ -1,6 +1,6 @@
 use super::{AppEvent, Screen, ScreenFrame};
 use crate::models::{Node, NodeManager};
-use crate::router::Action;
+use crate::router::{Action, Location};
 use anyhow::Result;
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -29,6 +29,10 @@ impl NodesListScreen {
             refresh_list: true,
             cached_nodes: vec![],
         }
+    }
+
+    fn handle_enter_node(&self, pubkey: String) -> Option<Action> {
+        Some(Action::Push(Location::Node(pubkey)))
     }
 }
 
@@ -74,7 +78,9 @@ impl Screen for NodesListScreen {
                         self.refresh_list = true;
                     } else {
                         // selected a certain node, go to the node screen
-                        // TODO
+                        return Ok(
+                            self.handle_enter_node(self.cached_nodes[selected - 1].pubkey.clone())
+                        );
                     }
                 }
                 KeyCode::Up => {

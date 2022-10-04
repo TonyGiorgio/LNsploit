@@ -1,11 +1,12 @@
 use crate::models::NodeManager;
-use crate::screens::{HomeScreen, NodesListScreen, Screen};
+use crate::screens::{HomeScreen, NodeScreen, NodesListScreen, Screen};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 pub enum Location {
     Home,
     NodesList,
+    Node(String),
 }
 
 pub enum Action {
@@ -43,6 +44,7 @@ impl Router {
         match location {
             Location::Home => Box::new(HomeScreen::new()),
             Location::NodesList => Box::new(NodesListScreen::new(self.node_manager.clone())),
+            Location::Node(pubkey) => Box::new(NodeScreen::new(self.node_manager.clone(), pubkey)),
         }
     }
 }

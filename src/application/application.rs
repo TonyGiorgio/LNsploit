@@ -1,6 +1,7 @@
 use crate::models::NodeManager;
 use crate::router::{Action, Router};
 use crate::screens::{AppEvent, HomeScreen, Screen};
+use crate::FilesystemLogger;
 use anyhow::{anyhow, Result};
 use bitcoincore_rpc::Client;
 use crossterm::{
@@ -31,10 +32,12 @@ impl Application {
     pub async fn new(
         db: Pool<ConnectionManager<SqliteConnection>>,
         bitcoind_client: Client,
+        logger: Arc<FilesystemLogger>,
     ) -> Result<Self> {
         let term = setup_terminal()?;
 
-        let node_manager = NodeManager::new(db.clone(), Arc::new(bitcoind_client)).await;
+        let node_manager =
+            NodeManager::new(db.clone(), Arc::new(bitcoind_client), logger.clone()).await;
         let node_manager = Arc::new(Mutex::new(node_manager));
 
         let current_screen = HomeScreen::new();
