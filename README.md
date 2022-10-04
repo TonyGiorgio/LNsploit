@@ -5,6 +5,7 @@ A Lightning Network exploit toolkit.
 ## Feature Ideas
 
 - UI:
+
   - Based on [tui-rs](https://github.com/fdehau/tui-rs)
   - A network explorer view of some sort
     - 20k+ nodes is a lot.. maybe do some filtering such as large value channels only?
@@ -26,7 +27,6 @@ A Lightning Network exploit toolkit.
       - Exploit
   - A list of usable exploits to use
     - Selecting an exploit takes you to a page where you select the node to target.
-
 
 - Exploits
   - Balance probe
@@ -64,11 +64,9 @@ To create a new migration file, do this:
 diesel migration generate node_channels
 ```
 
-
 ---
 
 # Pages
-
 
 ## Actions
 
@@ -107,14 +105,12 @@ _Node 1_
 
 ### Node Connect
 
-
 ```
 _Enter node connect information:_
 asdfasdfasdf@127.0.0.1:1937
 
 > Success/Failure!
 ```
-
 
 ### List Channel
 
@@ -126,8 +122,8 @@ _Channel List:_
 - Channel 2
 ```
 
-
 ### Open Channel
+
 ```
 _Enter node open channel information:_
 amount: 100000
@@ -137,7 +133,6 @@ public or private: public
 > Success/Failure!
 - [Back]
 ```
-
 
 ### Channel Actions
 
@@ -183,7 +178,6 @@ _New Address_
 - [Back]
 ```
 
-
 ## Network View
 
 ```
@@ -192,7 +186,6 @@ _Network View_
 - ACINQ (500 channels, 100 BTC Capacity)
 - OpenNode (200 channels, 52 BTC Capacity)
 ```
-
 
 ```
 _Node View_
@@ -204,7 +197,6 @@ Capacity: 100 BTC
 - [Back]
 ```
 
-
 ## Routing
 
 ```
@@ -215,8 +207,6 @@ Chan 1       | Chan 2          | 50000
 
 - [Back]
 ```
-
-
 
 ## Exploits
 
@@ -289,7 +279,6 @@ _Found Private Channels_
 - ACINQ : 0x302BCADC : 1 BTC
 ```
 
-
 ### Active Campaigns
 
 ```
@@ -309,7 +298,6 @@ Status: 5000 / 10000000
 - Stop Jamming
 ```
 
-
 ## Simulation Mode
 
 ```
@@ -322,7 +310,6 @@ _Simulation Mode_
 - Start
 - Points
 ```
-
 
 ### Generate to Address
 
@@ -360,3 +347,53 @@ Intercepted payment: 1
 
 - [Back]
 ```
+
+## User story for channel jamming
+
+JAMMING ALICE->BOB->CAROL circle
+
+user opens the app
+they create a node
+then look at that node:
+
+- get on-chain address, copy that
+
+go to simulation mode:
+
+- generate to address (a couple times, so you're rich)
+- mine some extra blocks to make sure you can spend
+
+now they need to open two channels:
+
+- peer with alice
+- open channel with alice
+- pay invoice to alice
+
+- peer with carol
+- open channel with carol
+- pay invoice to carol
+
+now set up ALICE->BOB->CAROL->ALICE circle (in polar, might already exist in the imported network)
+
+create invoice on carol
+pay invoice from alice
+
+create invoice on alice
+pay from carol
+
+open chan jammer:
+
+- pick the node (alice's node)
+- pick the channel (alice's channel with carol)
+- and click "jam"
+
+### TO TEST
+
+create invoice on carol
+pay it from alice...
+
+- if it worked, then you go to the routing view and see if you just routed a payment from alice to carol (because bob is jammed!)
+
+### WOULD BE COOL
+
+print out the route we create
