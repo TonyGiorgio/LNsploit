@@ -2,6 +2,7 @@ mod application;
 mod models;
 mod router;
 mod screens;
+mod widgets;
 
 use anyhow::Result;
 use application::Application;
