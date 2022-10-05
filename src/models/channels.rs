@@ -1,6 +1,7 @@
 use super::schema::channel_monitors::dsl::*;
 use super::schema::channel_updates::dsl::*;
-use super::schema::{channel_monitors, channel_updates};
+use super::schema::key_values::dsl::*;
+use super::schema::{channel_monitors, channel_updates, key_values};
 use super::RunnableChannelManager;
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use diesel::{prelude::*, r2d2::ConnectionManager, r2d2::Pool};
@@ -12,9 +13,10 @@ use lightning::chain::channelmonitor::ChannelMonitorUpdate;
 use lightning::chain::keysinterface::{KeysInterface, Sign};
 use lightning::chain::transaction::OutPoint;
 use lightning::chain::ChannelMonitorUpdateErr;
+use lightning::util::persist::KVStorePersister;
 use lightning::util::ser::{Readable, ReadableArgs, Writeable, Writer};
 use std::collections::HashMap;
-use std::io::Error;
+use std::io;
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::ops::Deref;
 use uuid::Uuid;
@@ -57,6 +59,21 @@ pub struct NewChannelUpdate<'a> {
     pub channel_tx_index: i32,
     pub channel_internal_update_id: i32,
     pub channel_update_data: Vec<u8>,
+}
+
+#[derive(Queryable)]
+pub struct KeyValue {
+    pub id: String,
+    pub node_id: String,
+    pub data_value: Vec<u8>,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = key_values)]
+pub struct NewKeyValue<'a> {
+    pub id: &'a str,
+    pub node_id: &'a str,
+    pub data_value: Vec<u8>,
 }
 
 pub struct NodePersister {
@@ -290,24 +307,115 @@ impl<ChannelSigner: Sign> chainmonitor::Persist<ChannelSigner> for NodePersister
     }
 }
 
+pub struct KVNodePersister {
+    db: Pool<ConnectionManager<SqliteConnection>>,
+    pub node_db_id: String,
+}
+
+impl KVNodePersister {
+    pub fn new(db: Pool<ConnectionManager<SqliteConnection>>, node_db_id: String) -> Self {
+        return Self { db, node_db_id };
+    }
+
+    pub fn read_value(&self, key: &str) -> Result<Vec<u8>, io::Error> {
+        let conn = &mut self.db.get().unwrap();
+        match key_values
+            .filter(super::schema::key_values::node_id.eq(self.node_db_id.clone()))
+            .filter(super::schema::key_values::id.eq(key))
+            .load::<KeyValue>(conn)
+        {
+            Ok(key_value_list) => match key_value_list.len() {
+                0 => Ok(vec![]),
+                1 => Ok(key_value_list[0].data_value.clone()),
+                _ => Err(std::io::Error::new(
+                    io::ErrorKind::Other,
+                    "could not save key value",
+                )),
+            },
+            Err(_) => Err(std::io::Error::new(
+                io::ErrorKind::Other,
+                "could not save key value",
+            )),
+        }
+    }
+}
+
+impl KVStorePersister for KVNodePersister {
+    fn persist<W: Writeable>(&self, key: &str, object: &W) -> std::io::Result<()> {
+        let conn = &mut self.db.get().unwrap();
+        let key_value_list = key_values
+            .filter(super::schema::key_values::node_id.eq(self.node_db_id.clone()))
+            .filter(super::schema::key_values::id.eq(key))
+            .load::<KeyValue>(conn)
+            .expect("error loading key values");
+        match key_value_list.len() {
+            0 => {
+                // no channel monitor for this node & outpoint, create
+                let new_key_value = NewKeyValue {
+                    id: key,
+                    node_id: String::as_str(&self.node_db_id),
+                    data_value: object.encode(),
+                };
+                match diesel::insert_into(key_values)
+                    .values(&new_key_value)
+                    .execute(conn)
+                {
+                    Ok(_) => (),
+                    Err(_) => {
+                        return Err(std::io::Error::new(
+                            io::ErrorKind::Other,
+                            "could not save key value",
+                        ))
+                    }
+                }
+            }
+            1 => {
+                // a channel monitor already exists, overwrite
+                match diesel::update(key_values)
+                    .filter(super::schema::key_values::node_id.eq(self.node_db_id.clone()))
+                    .filter(super::schema::key_values::id.eq(key))
+                    .set(super::schema::key_values::data_value.eq(object.encode()))
+                    .execute(conn)
+                {
+                    Ok(_) => (),
+                    Err(_) => {
+                        return Err(std::io::Error::new(
+                            io::ErrorKind::Other,
+                            "could not save key value",
+                        ))
+                    }
+                }
+            }
+            _ => {
+                return Err(std::io::Error::new(
+                    io::ErrorKind::Other,
+                    "could not save key value",
+                ))
+            }
+        };
+
+        Ok(())
+    }
+}
+
 pub(crate) trait DiskWriteable {
     fn write_to_memory<W: Writer>(&self, writer: &mut W) -> Result<(), std::io::Error>;
 }
 
 impl DiskWriteable for RunnableChannelManager {
-    fn write_to_memory<W: Writer>(&self, writer: &mut W) -> Result<(), Error> {
+    fn write_to_memory<W: Writer>(&self, writer: &mut W) -> Result<(), std::io::Error> {
         self.write(writer)
     }
 }
 
 impl<Signer: Sign> DiskWriteable for channelmonitor::ChannelMonitor<Signer> {
-    fn write_to_memory<W: Writer>(&self, writer: &mut W) -> Result<(), Error> {
+    fn write_to_memory<W: Writer>(&self, writer: &mut W) -> Result<(), std::io::Error> {
         self.write(writer)
     }
 }
 
 impl DiskWriteable for ChannelMonitorUpdate {
-    fn write_to_memory<W: Writer>(&self, writer: &mut W) -> Result<(), Error> {
+    fn write_to_memory<W: Writer>(&self, writer: &mut W) -> Result<(), std::io::Error> {
         self.write(writer)
     }
 }
