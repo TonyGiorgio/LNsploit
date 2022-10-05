@@ -1,7 +1,7 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
-    channel_managers (id) {
+    channel_monitors (id) {
         id -> Text,
         node_id -> Text,
         channel_tx_id -> Text,
@@ -18,6 +18,14 @@ diesel::table! {
         channel_tx_index -> Integer,
         channel_internal_update_id -> Integer,
         channel_update_data -> Binary,
+    }
+}
+
+diesel::table! {
+    key_values (id) {
+        id -> Text,
+        node_id -> Text,
+        data_value -> Binary,
     }
 }
 
@@ -45,14 +53,16 @@ diesel::table! {
     }
 }
 
-diesel::joinable!(channel_managers -> nodes (node_id));
+diesel::joinable!(channel_monitors -> nodes (node_id));
 diesel::joinable!(channel_updates -> nodes (node_id));
+diesel::joinable!(key_values -> nodes (node_id));
 diesel::joinable!(node_keys -> master_keys (master_key_id));
 diesel::joinable!(nodes -> node_keys (key_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
-    channel_managers,
+    channel_monitors,
     channel_updates,
+    key_values,
     master_keys,
     node_keys,
     nodes,

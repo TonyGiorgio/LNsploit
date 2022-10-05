@@ -1,7 +1,7 @@
 use super::schema::master_keys::dsl::*;
 use super::schema::node_keys::dsl::*;
 use super::schema::nodes;
-use super::{MasterKey, NodeKey, NodePersister};
+use super::{KVNodePersister, MasterKey, NodeKey, NodePersister};
 use crate::FilesystemLogger;
 use bip32::{Mnemonic, XPrv};
 use bitcoin::blockdata::block::Block;
@@ -14,13 +14,17 @@ use bitcoincore_rpc::bitcoincore_rpc_json::EstimateMode;
 use bitcoincore_rpc::{Client, RpcApi};
 use diesel::{prelude::*, r2d2::ConnectionManager, r2d2::Pool};
 use lightning::chain::chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator};
-use lightning::chain::chainmonitor;
 use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager, Recipient};
 use lightning::chain::Filter;
-use lightning::ln::channelmanager::SimpleArcChannelManager;
+use lightning::chain::{chainmonitor, BestBlock};
+use lightning::ln::channelmanager::{self, ChannelManagerReadArgs};
+use lightning::ln::channelmanager::{ChainParameters, SimpleArcChannelManager};
+use lightning::util::config::UserConfig;
+use lightning::util::ser::ReadableArgs;
 use lightning_block_sync::{
     AsyncBlockSourceResult, BlockHeaderData, BlockSource, BlockSourceError,
 };
+use std::io::Cursor;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -113,8 +117,19 @@ impl RunnableNode {
         // initialize the broadcaster interface
         let broadcaster = ldk_bitcoind_client.clone();
 
-        // create the persister
+        // create the persisters
+        // one for general SQL and one for KV for general LDK values
         let persister = Arc::new(NodePersister::new(db.clone(), db_id.clone()));
+        let kv_persister = Arc::new(KVNodePersister::new(db.clone(), db_id.clone()));
+
+        // init chain monitor
+        let chain_monitor: Arc<ChainMonitor> = Arc::new(chainmonitor::ChainMonitor::new(
+            None,
+            broadcaster.clone(),
+            logger.clone(),
+            fee_estimator.clone(),
+            persister.clone(),
+        ));
 
         // read channelmonitor state from disk
         let mut channelmonitors = persister
@@ -156,6 +171,71 @@ impl RunnableNode {
             }
         }
 
+        // init the channel manager
+
+        let mut user_config = UserConfig::default();
+        user_config
+            .channel_handshake_limits
+            .force_announced_channel_preference = false;
+        let mut restarting_node = true;
+        let (channel_manager_blockhash, channel_manager) = {
+            let (already_init, kv_value) = match kv_persister.read_value("manager") {
+                Ok(kv_value) => {
+                    // check if kv value is filled or not
+                    if kv_value.is_empty() {
+                        (false, vec![])
+                    } else {
+                        (true, kv_value)
+                    }
+                }
+                Err(_) => (false, vec![]),
+            };
+
+            if already_init {
+                let mut channel_monitor_mut_references = Vec::new();
+                for (_, channel_monitor) in channelmonitors.iter_mut() {
+                    channel_monitor_mut_references.push(channel_monitor);
+                }
+                let read_args = ChannelManagerReadArgs::new(
+                    keys_manager.clone(),
+                    fee_estimator.clone(),
+                    chain_monitor.clone(),
+                    broadcaster.clone(),
+                    logger.clone(),
+                    user_config,
+                    channel_monitor_mut_references,
+                );
+                let mut readable_kv_value = Cursor::new(kv_value);
+                <(BlockHash, RunnableChannelManager)>::read(&mut readable_kv_value, read_args)
+                    .unwrap()
+            } else {
+                // We're starting a fresh node.
+                restarting_node = false;
+                let getinfo_resp = ldk_bitcoind_client
+                    .bitcoind_client
+                    .get_blockchain_info()
+                    .unwrap(); // TODO do not unwrap
+
+                let chain_params = ChainParameters {
+                    network: bitcoin::Network::Regtest, // TODO load
+                    best_block: BestBlock::new(
+                        getinfo_resp.best_block_hash,
+                        getinfo_resp.blocks as u32,
+                    ),
+                };
+                let fresh_channel_manager = channelmanager::ChannelManager::new(
+                    fee_estimator.clone(),
+                    chain_monitor.clone(),
+                    broadcaster.clone(),
+                    logger.clone(),
+                    keys_manager.clone(),
+                    user_config,
+                    chain_params,
+                );
+                (getinfo_resp.best_block_hash, fresh_channel_manager)
+            }
+        };
+
         return Ok(RunnableNode {
             db: db.clone(),
             db_id: db_id.clone(),
@@ -184,7 +264,7 @@ pub(crate) type RunnableChannelManager =
 
 #[derive(Clone)]
 pub struct LdkBitcoindClient {
-    bitcoind_client: Arc<Client>,
+    pub bitcoind_client: Arc<Client>,
 }
 
 impl BlockSource for &LdkBitcoindClient {
