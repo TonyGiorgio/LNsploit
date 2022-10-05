@@ -1,2 +1,2 @@
-DROP TABLE channel_manager
-DROP TABLE channel_update
+DROP TABLE channel_monitors
+DROP TABLE channel_updates

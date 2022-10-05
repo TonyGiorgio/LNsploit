@@ -1,4 +1,4 @@
-CREATE TABLE channel_managers (
+CREATE TABLE channel_monitors (
   id CHAR(36) PRIMARY KEY NOT NULL,
   node_id CHAR(36) NOT NULL REFERENCES nodes(id),
   channel_tx_id CHAR(64) NOT NULL,
