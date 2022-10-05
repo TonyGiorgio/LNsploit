@@ -89,7 +89,8 @@ impl NodeManager {
             new_node_key_id.clone(),
             self.bitcoind_client.clone(),
             self.logger.clone(),
-        )?;
+        )
+        .await?;
 
         let new_node = NewNode {
             id: String::as_str(&new_node_id),
