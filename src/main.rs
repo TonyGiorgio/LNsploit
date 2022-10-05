@@ -7,6 +7,7 @@ use anyhow::Result;
 use application::Application;
 use bitcoincore_rpc::{Auth, Client, RpcApi};
 use chrono::Utc;
+use diesel::connection::SimpleConnection;
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use diesel::sqlite::SqliteConnection;
@@ -15,6 +16,7 @@ use lightning::util::logger::{Logger, Record};
 use serde::Deserialize;
 use std::fs;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 
@@ -57,6 +59,12 @@ async fn main() -> Result<()> {
     // DB management
     let manager = ConnectionManager::<SqliteConnection>::new(config.db.connection);
     let pool = Pool::builder()
+        .max_size(16)
+        .connection_customizer(Box::new(ConnectionOptions {
+            enable_wal: true,
+            enable_foreign_keys: true,
+            busy_timeout: Some(Duration::from_secs(30)),
+        }))
         .test_on_check_out(true)
         .build(manager)
         .expect("Could not build connection pool");
@@ -126,5 +134,32 @@ impl Logger for FilesystemLogger {
             log.as_bytes(),
         )
         .unwrap();
+    }
+}
+
+#[derive(Debug)]
+pub struct ConnectionOptions {
+    pub enable_wal: bool,
+    pub enable_foreign_keys: bool,
+    pub busy_timeout: Option<Duration>,
+}
+
+impl diesel::r2d2::CustomizeConnection<SqliteConnection, diesel::r2d2::Error>
+    for ConnectionOptions
+{
+    fn on_acquire(&self, conn: &mut SqliteConnection) -> Result<(), diesel::r2d2::Error> {
+        (|| {
+            if self.enable_wal {
+                conn.batch_execute("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+            }
+            if self.enable_foreign_keys {
+                conn.batch_execute("PRAGMA foreign_keys = ON;")?;
+            }
+            if let Some(d) = self.busy_timeout {
+                conn.batch_execute(&format!("PRAGMA busy_timeout = {};", d.as_millis()))?;
+            }
+            Ok(())
+        })()
+        .map_err(diesel::r2d2::Error::QueryError)
     }
 }

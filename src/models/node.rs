@@ -5,6 +5,7 @@ use super::{KVNodePersister, MasterKey, NodeKey, NodePersister};
 use crate::FilesystemLogger;
 use bip32::{Mnemonic, XPrv};
 use bitcoin::blockdata::block::Block;
+use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::hash_types::BlockHash;
 use bitcoin::secp256k1::PublicKey;
@@ -19,6 +20,7 @@ use lightning::chain::{self, Filter, Watch};
 use lightning::chain::{chainmonitor, BestBlock};
 use lightning::ln::channelmanager::{self, ChannelManagerReadArgs};
 use lightning::ln::channelmanager::{ChainParameters, SimpleArcChannelManager};
+use lightning::routing::gossip::{self, P2PGossipSync};
 use lightning::util::config::UserConfig;
 use lightning::util::ser::ReadableArgs;
 use lightning_block_sync::{
@@ -26,7 +28,7 @@ use lightning_block_sync::{
 };
 use std::io::Cursor;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 #[derive(Queryable)]
 pub struct Node {
@@ -296,6 +298,32 @@ impl RunnableNode {
                 .unwrap();
         }
 
+        // initialize network graph
+        let genesis = genesis_block(bitcoin::Network::Regtest).header.block_hash();
+        let network_graph = Arc::new(kv_persister.read_network(genesis, logger.clone()));
+
+        let gossip_sync = Arc::new(P2PGossipSync::new(
+            Arc::clone(&network_graph),
+            None::<Arc<dyn chain::Access + Send + Sync>>,
+            logger.clone(),
+        ));
+        let network_graph_persist = Arc::clone(&network_graph);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(600));
+            loop {
+                interval.tick().await;
+                let res = kv_persister.persist_network(&network_graph_persist);
+                if res.is_err() {
+                    // Persistence errors here are non-fatal as we can just fetch the routing graph
+                    // again later, but they may indicate a disk error which could be fatal elsewhere.
+                    eprintln!(
+                        "Warning: Failed to persist network graph to DB: {:?}",
+                        res.err()
+                    );
+                }
+            }
+        });
+
         return Ok(RunnableNode {
             db: db.clone(),
             db_id: db_id.clone(),
@@ -318,6 +346,8 @@ type ChainMonitor = chainmonitor::ChainMonitor<
     Arc<FilesystemLogger>,
     Arc<NodePersister>,
 >;
+
+pub(crate) type NetworkGraph = gossip::NetworkGraph<Arc<FilesystemLogger>>;
 
 pub(crate) type RunnableChannelManager =
     SimpleArcChannelManager<ChainMonitor, LdkBitcoindClient, LdkBitcoindClient, FilesystemLogger>;
