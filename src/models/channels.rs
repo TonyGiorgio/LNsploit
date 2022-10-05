@@ -2,17 +2,20 @@ use super::schema::channel_managers::dsl::*;
 use super::schema::channel_updates::dsl::*;
 use super::schema::{channel_managers, channel_updates};
 use super::RunnableChannelManager;
-use bitcoin::hashes::hex::ToHex;
+use bitcoin::hashes::hex::{FromHex, ToHex};
 use diesel::{prelude::*, r2d2::ConnectionManager, r2d2::Pool};
 
+use bitcoin::hash_types::{BlockHash, Txid};
 use lightning::chain::chainmonitor;
 use lightning::chain::channelmonitor::{ChannelMonitor, ChannelMonitorUpdate};
-use lightning::chain::keysinterface::Sign;
+use lightning::chain::keysinterface::{KeysInterface, Sign};
 use lightning::chain::transaction::OutPoint;
 use lightning::chain::ChannelMonitorUpdateErr;
-use lightning::util::ser::{Writeable, Writer};
+use lightning::util::ser::{Readable, ReadableArgs, Writeable, Writer};
+use std::collections::HashMap;
 use std::io::Error;
 use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::ops::Deref;
 use uuid::Uuid;
 
 #[derive(Queryable)]
@@ -63,6 +66,103 @@ pub struct NodePersister {
 impl NodePersister {
     pub fn new(db: Pool<ConnectionManager<SqliteConnection>>, node_db_id: String) -> Self {
         return Self { db, node_db_id };
+    }
+
+    pub fn read_channelmonitors<Signer: Sign, K: Deref>(
+        &self,
+        keys_manager: K,
+    ) -> Result<Vec<(BlockHash, ChannelMonitor<Signer>)>, std::io::Error>
+    where
+        K::Target: KeysInterface<Signer = Signer> + Sized,
+    {
+        let conn = &mut self.db.get().unwrap();
+        let mut res = Vec::new();
+
+        // Get all the channel monitor buffers that exist for this node
+        let channel_manager_list = channel_managers
+            .filter(super::schema::channel_managers::node_id.eq(self.node_db_id.clone()))
+            .load::<ChannelManager>(conn)
+            .expect("error loading channel managers");
+
+        for channel_manager_item in channel_manager_list {
+            let txid = Txid::from_hex(String::as_str(&channel_manager_item.channel_tx_id));
+            if txid.is_err() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid tx ID in db",
+                ));
+            }
+            let index = channel_manager_item.channel_tx_index;
+
+            let contents = channel_manager_item.channel_monitor_data;
+            let mut buffer = Cursor::new(&contents);
+            match <(BlockHash, ChannelMonitor<Signer>)>::read(&mut buffer, &*keys_manager) {
+                Ok((blockhash, channel_monitor)) => {
+                    if channel_monitor.get_funding_txo().0.txid != txid.unwrap()
+                        || channel_monitor.get_funding_txo().0.index != index as u16
+                    {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "ChannelMonitor was stored in the wrong file",
+                        ));
+                    }
+                    res.push((blockhash, channel_monitor));
+                }
+                Err(e) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Failed to deserialize ChannelMonitor: {}", e),
+                    ))
+                }
+            }
+        }
+
+        Ok(res)
+    }
+
+    pub fn read_channelmonitor_updates(
+        &self,
+    ) -> Result<HashMap<Txid, Vec<ChannelMonitorUpdate>>, std::io::Error> {
+        let mut tx_id_channel_map: HashMap<Txid, Vec<ChannelMonitorUpdate>> = HashMap::new();
+        let conn = &mut self.db.get().unwrap();
+
+        let channel_manager_update_list = channel_updates
+            .filter(super::schema::channel_updates::node_id.eq(self.node_db_id.clone()))
+            .load::<ChannelUpdate>(conn)
+            .expect("error loading channel managers");
+
+        for channel_update_item in channel_manager_update_list {
+            let txid = Txid::from_hex(String::as_str(&channel_update_item.channel_tx_id));
+            if txid.is_err() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid tx ID in db",
+                ));
+            }
+            // let index = channel_update_item.channel_tx_index;
+
+            let contents = channel_update_item.channel_update_data;
+            let mut buffer = Cursor::new(&contents);
+            match <ChannelMonitorUpdate>::read(&mut buffer) {
+                Ok(channel_monitor_update) => {
+                    // see if we already have this key
+                    match tx_id_channel_map.get_mut(&txid.unwrap()) {
+                        Some(map) => map.push(channel_monitor_update),
+                        None => {
+                            tx_id_channel_map.insert(txid.unwrap(), vec![channel_monitor_update]);
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Failed to deserialize ChannelMonitorUpdate: {}", e),
+                    ))
+                }
+            }
+        }
+
+        Ok(tx_id_channel_map)
     }
 }
 

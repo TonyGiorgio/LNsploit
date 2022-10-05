@@ -48,7 +48,7 @@ pub struct RunnableNode {
     pub xpriv: XPrv,
     pub keys_manager: Arc<KeysManager>,
     pub persister: Arc<NodePersister>,
-    pub ldk_bitcoind_client: LdkBitcoindClient,
+    pub ldk_bitcoind_client: Arc<LdkBitcoindClient>,
     pub logger: Arc<FilesystemLogger>,
 }
 
@@ -105,10 +105,56 @@ impl RunnableNode {
         let pubkey = PublicKey::from_secret_key(&secp_ctx, &our_network_key).to_string();
 
         // init the LDK wrapper for bitcoind
-        let ldk_bitcoind_client = LdkBitcoindClient { bitcoind_client };
+        let ldk_bitcoind_client = Arc::new(LdkBitcoindClient { bitcoind_client });
+
+        //initialize the fee estimator
+        let fee_estimator = ldk_bitcoind_client.clone();
+
+        // initialize the broadcaster interface
+        let broadcaster = ldk_bitcoind_client.clone();
 
         // create the persister
         let persister = Arc::new(NodePersister::new(db.clone(), db_id.clone()));
+
+        // read channelmonitor state from disk
+        let mut channelmonitors = persister
+            .read_channelmonitors(keys_manager.clone())
+            .unwrap();
+
+        // Load channel monitor updates from disk as well
+        let channelmonitorupdates = persister.read_channelmonitor_updates().unwrap();
+        for (_, channel_monitor) in channelmonitors.iter_mut() {
+            // which utxo is this channel monitoring for?
+            let (channel_output, _) = channel_monitor.get_funding_txo();
+            let channel_updates_res = channelmonitorupdates.get(&channel_output.txid);
+            match channel_updates_res {
+                Some(channel_updates) => {
+                    // if we found the channel monitor for this channel update,
+                    // apply in order
+                    let mut sorted_channel_updates = channel_updates.clone();
+                    sorted_channel_updates.sort_by(|a, b| a.update_id.cmp(&b.update_id));
+                    for channel_monitor_update in sorted_channel_updates.iter_mut() {
+                        println!(
+                            "applying update {} for {}",
+                            channel_monitor_update.update_id, channel_output.txid
+                        );
+
+                        match channel_monitor.update_monitor(
+                            channel_monitor_update,
+                            &broadcaster,
+                            fee_estimator.clone(),
+                            &logger,
+                        ) {
+                            Ok(_) => continue,
+                            Err(e) => {
+                                panic!("could not process update monitor: {:?}", e)
+                            }
+                        }
+                    }
+                }
+                None => continue,
+            }
+        }
 
         return Ok(RunnableNode {
             db: db.clone(),
