@@ -2,11 +2,11 @@ use super::schema::channel_monitors::dsl::*;
 use super::schema::channel_updates::dsl::*;
 use super::schema::key_values::dsl::*;
 use super::schema::{channel_monitors, channel_updates, key_values};
-use super::RunnableChannelManager;
+use super::{NetworkGraph, RunnableChannelManager};
+use crate::FilesystemLogger;
+use bitcoin::hash_types::{BlockHash, Txid};
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use diesel::{prelude::*, r2d2::ConnectionManager, r2d2::Pool};
-
-use bitcoin::hash_types::{BlockHash, Txid};
 use lightning::chain::chainmonitor;
 use lightning::chain::channelmonitor;
 use lightning::chain::channelmonitor::ChannelMonitorUpdate;
@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::io;
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::ops::Deref;
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Queryable)]
@@ -338,6 +339,37 @@ impl KVNodePersister {
             )),
         }
     }
+
+    pub fn read_network(
+        &self,
+        genesis_hash: BlockHash,
+        logger: Arc<FilesystemLogger>,
+    ) -> NetworkGraph {
+        let (already_init, kv_value) = match self.read_value("network") {
+            Ok(kv_value) => {
+                // check if kv value is filled or not
+                if kv_value.is_empty() {
+                    (false, vec![])
+                } else {
+                    (true, kv_value)
+                }
+            }
+            Err(_) => (false, vec![]),
+        };
+
+        if already_init {
+            let mut readable_kv_value = Cursor::new(kv_value);
+            if let Ok(graph) = NetworkGraph::read(&mut readable_kv_value, logger.clone()) {
+                // println!("Reading {:?} took {}s", path, now.elapsed().as_secs_f64());
+                return graph;
+            }
+        }
+        NetworkGraph::new(genesis_hash, logger)
+    }
+
+    pub fn persist_network(&self, network_graph: &NetworkGraph) -> std::io::Result<()> {
+        return self.persist("network", network_graph);
+    }
 }
 
 impl KVStorePersister for KVNodePersister {
@@ -361,10 +393,10 @@ impl KVStorePersister for KVNodePersister {
                     .execute(conn)
                 {
                     Ok(_) => (),
-                    Err(_) => {
+                    Err(e) => {
                         return Err(std::io::Error::new(
                             io::ErrorKind::Other,
-                            "could not save key value",
+                            format!("could not save value for new key: {:?}", e),
                         ))
                     }
                 }
@@ -381,7 +413,7 @@ impl KVStorePersister for KVNodePersister {
                     Err(_) => {
                         return Err(std::io::Error::new(
                             io::ErrorKind::Other,
-                            "could not save key value",
+                            "could not update value for existing key",
                         ))
                     }
                 }
@@ -389,7 +421,7 @@ impl KVStorePersister for KVNodePersister {
             _ => {
                 return Err(std::io::Error::new(
                     io::ErrorKind::Other,
-                    "could not save key value",
+                    "there's more than one key for some reason, cannot update",
                 ))
             }
         };
