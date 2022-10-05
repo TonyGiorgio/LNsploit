@@ -15,14 +15,14 @@ use bitcoincore_rpc::{Client, RpcApi};
 use diesel::{prelude::*, r2d2::ConnectionManager, r2d2::Pool};
 use lightning::chain::chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator};
 use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager, Recipient};
-use lightning::chain::Filter;
+use lightning::chain::{self, Filter, Watch};
 use lightning::chain::{chainmonitor, BestBlock};
 use lightning::ln::channelmanager::{self, ChannelManagerReadArgs};
 use lightning::ln::channelmanager::{ChainParameters, SimpleArcChannelManager};
 use lightning::util::config::UserConfig;
 use lightning::util::ser::ReadableArgs;
 use lightning_block_sync::{
-    AsyncBlockSourceResult, BlockHeaderData, BlockSource, BlockSourceError,
+    poll, AsyncBlockSourceResult, BlockHeaderData, BlockSource, BlockSourceError, UnboundedCache,
 };
 use std::io::Cursor;
 use std::sync::Arc;
@@ -57,7 +57,7 @@ pub struct RunnableNode {
 }
 
 impl RunnableNode {
-    pub fn new(
+    pub async fn new(
         db: Pool<ConnectionManager<SqliteConnection>>,
         db_id: String,
         key_id: String,
@@ -116,6 +116,9 @@ impl RunnableNode {
 
         // initialize the broadcaster interface
         let broadcaster = ldk_bitcoind_client.clone();
+
+        // block source
+        let block_source = ldk_bitcoind_client.clone();
 
         // create the persisters
         // one for general SQL and one for KV for general LDK values
@@ -235,6 +238,63 @@ impl RunnableNode {
                 (getinfo_resp.best_block_hash, fresh_channel_manager)
             }
         };
+
+        // sync to chain tip
+        let mut chain_listener_channel_monitors = Vec::new();
+        let mut cache = UnboundedCache::new();
+        let mut chain_tip: Option<poll::ValidatedBlockHeader> = None;
+        if restarting_node {
+            let mut chain_listeners = vec![(
+                channel_manager_blockhash,
+                &channel_manager as &dyn chain::Listen,
+            )];
+
+            for (blockhash, channel_monitor) in channelmonitors.drain(..) {
+                let outpoint = channel_monitor.get_funding_txo().0;
+                chain_listener_channel_monitors.push((
+                    blockhash,
+                    (
+                        channel_monitor,
+                        broadcaster.clone(),
+                        fee_estimator.clone(),
+                        logger.clone(),
+                    ),
+                    outpoint,
+                ));
+            }
+
+            for monitor_listener_info in chain_listener_channel_monitors.iter_mut() {
+                chain_listeners.push((
+                    monitor_listener_info.0,
+                    &monitor_listener_info.1 as &dyn chain::Listen,
+                ));
+            }
+
+            // TODO handle synchronize_listeners to catch up a restarting node
+            // This is unsafe if blocks mine without this being on
+            // May even crash, not sure. Having async problems...
+            /*
+                chain_tip = Some(
+                    init::synchronize_listeners(
+                        &mut block_source.deref(),
+                        bitcoin::Network::Regtest, // TODO load
+                        &mut cache,
+                        chain_listeners,
+                    )
+                    .await
+                    .unwrap(),
+                );
+            */
+        }
+
+        // give channel monitors to chain monitor
+        for item in chain_listener_channel_monitors.drain(..) {
+            let channel_monitor = item.1 .0;
+            let funding_outpoint = item.2;
+            chain_monitor
+                .watch_channel(funding_outpoint, channel_monitor)
+                .unwrap();
+        }
 
         return Ok(RunnableNode {
             db: db.clone(),
