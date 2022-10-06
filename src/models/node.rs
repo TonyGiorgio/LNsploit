@@ -39,6 +39,8 @@ use lightning_block_sync::SpvClient;
 use lightning_block_sync::{
     poll, AsyncBlockSourceResult, BlockHeaderData, BlockSource, BlockSourceError, UnboundedCache,
 };
+use lightning_invoice::payment;
+use lightning_invoice::utils::DefaultRouter;
 use lightning_net_tokio::SocketDescriptor;
 use rand::Rng;
 use std::collections::hash_map::Entry;
@@ -495,6 +497,21 @@ impl RunnableNode {
             }
         });
 
+        // create invoice payer
+        let router = DefaultRouter::new(
+            network_graph.clone(),
+            logger.clone(),
+            keys_manager.get_secure_random_bytes(),
+        );
+        let invoice_payer = Arc::new(InvoicePayer::new(
+            channel_manager.clone(),
+            router,
+            scorer.clone(),
+            logger.clone(),
+            event_handler,
+            payment::Retry::Timeout(Duration::from_secs(0)), // No ever trying to retry payments
+        ));
+
         return Ok(RunnableNode {
             db: db.clone(),
             db_id: db_id.clone(),
@@ -827,6 +844,14 @@ pub(crate) struct PaymentInfo {
     status: HTLCStatus,
     amt_msat: MillisatAmount,
 }
+
+pub(crate) type InvoicePayer<E> = payment::InvoicePayer<
+    Arc<ChannelManager>,
+    Router,
+    Arc<Mutex<ProbabilisticScorer<Arc<NetworkGraph>, Arc<FilesystemLogger>>>>,
+    Arc<FilesystemLogger>,
+    E,
+>;
 
 pub(crate) enum HTLCStatus {
     Pending,
