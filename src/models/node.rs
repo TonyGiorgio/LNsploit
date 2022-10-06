@@ -7,13 +7,19 @@ use bip32::{Mnemonic, XPrv};
 use bitcoin::blockdata::block::Block;
 use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::blockdata::transaction::Transaction;
+use bitcoin::consensus::encode;
 use bitcoin::hash_types::BlockHash;
+use bitcoin::network::constants::Network;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::secp256k1::Secp256k1;
+use bitcoin::util::address::Address;
 use bitcoin::util::uint::Uint256;
-use bitcoincore_rpc::bitcoincore_rpc_json::EstimateMode;
+use bitcoin::Amount;
+use bitcoin_bech32::WitnessProgram;
+use bitcoincore_rpc::bitcoincore_rpc_json::{EstimateMode, FundRawTransactionOptions};
 use bitcoincore_rpc::{Client, RpcApi};
 use diesel::{prelude::*, r2d2::ConnectionManager, r2d2::Pool};
+use hex;
 use lightning::chain::chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator};
 use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager, Recipient};
 use lightning::chain::{self, Filter, Watch};
@@ -21,9 +27,11 @@ use lightning::chain::{chainmonitor, BestBlock};
 use lightning::ln::channelmanager::{self, ChannelManagerReadArgs};
 use lightning::ln::channelmanager::{ChainParameters, SimpleArcChannelManager};
 use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, SimpleArcPeerManager};
+use lightning::ln::{PaymentHash, PaymentPreimage, PaymentSecret};
 use lightning::onion_message::SimpleArcOnionMessenger;
-use lightning::routing::gossip::{self, P2PGossipSync};
+use lightning::routing::gossip::{self, NodeId, P2PGossipSync};
 use lightning::util::config::UserConfig;
+use lightning::util::events::{Event, PaymentPurpose};
 use lightning::util::logger::{Logger, Record};
 use lightning::util::ser::ReadableArgs;
 use lightning_block_sync::init;
@@ -33,6 +41,9 @@ use lightning_block_sync::{
 };
 use lightning_net_tokio::SocketDescriptor;
 use rand::Rng;
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
+use std::fmt;
 use std::io::Cursor;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -135,9 +146,6 @@ impl RunnableNode {
 
         // initialize the broadcaster interface
         let broadcaster = ldk_bitcoind_client.clone();
-
-        // block source
-        let block_source = ldk_bitcoind_client.clone();
 
         // create the persisters
         // one for general SQL and one for KV for general LDK values
@@ -443,6 +451,342 @@ impl RunnableNode {
     }
 }
 
+async fn handle_ldk_events(
+    channel_manager: &Arc<RunnableChannelManager>,
+    bitcoind_client: &LdkBitcoindClient,
+    network_graph: &NetworkGraph,
+    keys_manager: &KeysManager,
+    inbound_payments: &PaymentInfoStorage,
+    outbound_payments: &PaymentInfoStorage,
+    network: Network,
+    event: &Event,
+    logger: FilesystemLogger,
+) {
+    match event {
+        Event::FundingGenerationReady {
+            temporary_channel_id,
+            counterparty_node_id,
+            channel_value_satoshis,
+            output_script,
+            ..
+        } => {
+            // Construct the raw transaction with one output, that is paid the amount of the
+            // channel.
+            let addr = WitnessProgram::from_scriptpubkey(
+                &output_script[..],
+                match network {
+                    Network::Bitcoin => bitcoin_bech32::constants::Network::Bitcoin,
+                    Network::Testnet => bitcoin_bech32::constants::Network::Testnet,
+                    Network::Regtest => bitcoin_bech32::constants::Network::Regtest,
+                    Network::Signet => bitcoin_bech32::constants::Network::Signet,
+                },
+            )
+            .expect("Lightning funding tx should always be to a SegWit output")
+            .to_address();
+            let mut outputs = HashMap::with_capacity(1);
+            outputs.insert(addr, Amount::from_sat(*channel_value_satoshis));
+            let raw_tx = bitcoind_client.create_raw_transaction(outputs);
+
+            // Have your wallet put the inputs into the transaction such that the output is
+            // satisfied.
+            let funded_tx = bitcoind_client.fund_raw_transaction(raw_tx);
+
+            // Sign the final funding transaction and broadcast it.
+            let signed_tx = bitcoind_client.sign_raw_transaction_with_wallet(funded_tx.hex);
+            assert_eq!(signed_tx.complete, true);
+            let final_tx: Transaction =
+                encode::deserialize(&to_vec(&signed_tx.hex).unwrap()).unwrap();
+            // Give the funding transaction back to LDK for opening the channel.
+            if channel_manager
+                .funding_transaction_generated(
+                    &temporary_channel_id,
+                    counterparty_node_id,
+                    final_tx,
+                )
+                .is_err()
+            {
+                logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: Channel went away before we could fund it. The peer disconnected or refused the channel."),
+                    "node",
+                    "",
+                    0,
+                ));
+            }
+        }
+        Event::PaymentReceived {
+            payment_hash,
+            purpose,
+            amount_msat,
+        } => {
+            logger.log(&Record::new(
+                lightning::util::logger::Level::Info,
+                format_args!(
+                    "EVENT: received payment from payment hash {} of {} millisatoshis",
+                    hex_str(&payment_hash.0),
+                    amount_msat
+                ),
+                "node",
+                "",
+                0,
+            ));
+
+            let payment_preimage = match purpose {
+                PaymentPurpose::InvoicePayment {
+                    payment_preimage, ..
+                } => *payment_preimage,
+                PaymentPurpose::SpontaneousPayment(preimage) => Some(*preimage),
+            };
+            channel_manager.claim_funds(payment_preimage.unwrap());
+        }
+        Event::PaymentClaimed {
+            payment_hash,
+            purpose,
+            amount_msat,
+        } => {
+            logger.log(&Record::new(
+                lightning::util::logger::Level::Info,
+                format_args!(
+                    "EVENT: claimed payment from payment hash {} of {} millisatoshis",
+                    hex_str(&payment_hash.0),
+                    amount_msat
+                ),
+                "node",
+                "",
+                0,
+            ));
+
+            let (payment_preimage, payment_secret) = match purpose {
+                PaymentPurpose::InvoicePayment {
+                    payment_preimage,
+                    payment_secret,
+                    ..
+                } => (*payment_preimage, Some(*payment_secret)),
+                PaymentPurpose::SpontaneousPayment(preimage) => (Some(*preimage), None),
+            };
+            let mut payments = inbound_payments.lock().unwrap();
+            match payments.entry(*payment_hash) {
+                Entry::Occupied(mut e) => {
+                    let payment = e.get_mut();
+                    payment.status = HTLCStatus::Succeeded;
+                    payment.preimage = payment_preimage;
+                    payment.secret = payment_secret;
+                }
+                Entry::Vacant(e) => {
+                    e.insert(PaymentInfo {
+                        preimage: payment_preimage,
+                        secret: payment_secret,
+                        status: HTLCStatus::Succeeded,
+                        amt_msat: MillisatAmount(Some(*amount_msat)),
+                    });
+                }
+            }
+        }
+        Event::PaymentSent {
+            payment_preimage,
+            payment_hash,
+            fee_paid_msat,
+            ..
+        } => {
+            let mut payments = outbound_payments.lock().unwrap();
+            for (hash, payment) in payments.iter_mut() {
+                if *hash == *payment_hash {
+                    payment.preimage = Some(*payment_preimage);
+                    payment.status = HTLCStatus::Succeeded;
+
+                    logger.log(&Record::new(
+                        lightning::util::logger::Level::Info,
+                        format_args!(
+                            "EVENT: successfully sent payment of {} millisatoshis{} from payment hash {:?} with preimage {:?}",
+                                payment.amt_msat,
+                                if let Some(fee) = fee_paid_msat {
+                                    format!(" (fee {} msat)", fee)
+                                } else {
+                                    "".to_string()
+                                },
+                                hex_str(&payment_hash.0),
+                                hex_str(&payment_preimage.0)
+                        ),
+                        "node",
+                        "",
+                        0,
+                    ));
+                }
+            }
+        }
+        Event::OpenChannelRequest { .. } => {
+            // Unreachable, we don't set manually_accept_inbound_channels
+        }
+        Event::PaymentPathSuccessful { .. } => {}
+        Event::PaymentPathFailed { .. } => {}
+        Event::ProbeSuccessful { .. } => {}
+        Event::ProbeFailed { .. } => {}
+        Event::PaymentFailed { payment_hash, .. } => {
+            logger.log(&Record::new(
+                lightning::util::logger::Level::Info,
+                format_args!(
+                    "EVENT: Failed to send payment to payment hash {:?}: exhausted payment retry attempts",
+                    hex_str(&payment_hash.0)
+                ),
+                "node",
+                "",
+                0,
+            ));
+
+            let mut payments = outbound_payments.lock().unwrap();
+            if payments.contains_key(&payment_hash) {
+                let payment = payments.get_mut(&payment_hash).unwrap();
+                payment.status = HTLCStatus::Failed;
+            }
+        }
+        Event::PaymentForwarded {
+            prev_channel_id,
+            next_channel_id,
+            fee_earned_msat,
+            claim_from_onchain_tx,
+        } => {
+            let read_only_network_graph = network_graph.read_only();
+            let nodes = read_only_network_graph.nodes();
+            let channels = channel_manager.list_channels();
+
+            let node_str = |channel_id: &Option<[u8; 32]>| match channel_id {
+                None => String::new(),
+                Some(channel_id) => match channels.iter().find(|c| c.channel_id == *channel_id) {
+                    None => String::new(),
+                    Some(channel) => {
+                        match nodes.get(&NodeId::from_pubkey(&channel.counterparty.node_id)) {
+                            None => "private node".to_string(),
+                            Some(node) => match &node.announcement_info {
+                                None => "unnamed node".to_string(),
+                                Some(announcement) => {
+                                    format!("node {}", announcement.alias)
+                                }
+                            },
+                        }
+                    }
+                },
+            };
+            let channel_str = |channel_id: &Option<[u8; 32]>| {
+                channel_id
+                    .map(|channel_id| format!(" with channel {}", hex_str(&channel_id)))
+                    .unwrap_or_default()
+            };
+            let from_prev_str = format!(
+                " from {}{}",
+                node_str(prev_channel_id),
+                channel_str(prev_channel_id)
+            );
+            let to_next_str = format!(
+                " to {}{}",
+                node_str(next_channel_id),
+                channel_str(next_channel_id)
+            );
+
+            let from_onchain_str = if *claim_from_onchain_tx {
+                "from onchain downstream claim"
+            } else {
+                "from HTLC fulfill message"
+            };
+            if let Some(fee_earned) = fee_earned_msat {
+                logger.log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!(
+                        "EVENT: Forwarded payment{}{}, earning {} msat {}",
+                        from_prev_str, to_next_str, fee_earned, from_onchain_str
+                    ),
+                    "node",
+                    "",
+                    0,
+                ));
+            } else {
+                logger.log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!(
+                        "EVENT: Forwarded payment{}{}, claiming onchain {}",
+                        from_prev_str, to_next_str, from_onchain_str
+                    ),
+                    "node",
+                    "",
+                    0,
+                ));
+            }
+        }
+        Event::HTLCHandlingFailed { .. } => {}
+        Event::PendingHTLCsForwardable { time_forwardable } => {
+            let forwarding_channel_manager = channel_manager.clone();
+            let min = time_forwardable.as_millis() as u64;
+            tokio::spawn(async move {
+                let millis_to_sleep = rand::thread_rng().gen_range(min, min * 5) as u64;
+                tokio::time::sleep(Duration::from_millis(millis_to_sleep)).await;
+                forwarding_channel_manager.process_pending_htlc_forwards();
+            });
+        }
+        Event::SpendableOutputs { outputs } => {
+            let destination_address = bitcoind_client.get_new_address();
+            let output_descriptors = &outputs.iter().map(|a| a).collect::<Vec<_>>();
+            let tx_feerate =
+                bitcoind_client.get_est_sat_per_1000_weight(ConfirmationTarget::Normal);
+            let spending_tx = keys_manager
+                .spend_spendable_outputs(
+                    output_descriptors,
+                    Vec::new(),
+                    destination_address.script_pubkey(),
+                    tx_feerate,
+                    &Secp256k1::new(),
+                )
+                .unwrap();
+            bitcoind_client.broadcast_transaction(&spending_tx);
+        }
+        Event::ChannelClosed {
+            channel_id,
+            reason,
+            user_channel_id: _,
+        } => {
+            logger.log(&Record::new(
+                lightning::util::logger::Level::Info,
+                format_args!(
+                    "EVENT: Channel {} closed due to: {:?}",
+                    hex_str(channel_id),
+                    reason
+                ),
+                "node",
+                "",
+                0,
+            ));
+        }
+        Event::DiscardFunding { .. } => {
+            // A "real" node should probably "lock" the UTXOs spent in funding transactions until
+            // the funding transaction either confirms, or this event is generated.
+        }
+    }
+}
+
+pub(crate) type PaymentInfoStorage = Arc<std::sync::Mutex<HashMap<PaymentHash, PaymentInfo>>>;
+
+pub(crate) struct PaymentInfo {
+    preimage: Option<PaymentPreimage>,
+    secret: Option<PaymentSecret>,
+    status: HTLCStatus,
+    amt_msat: MillisatAmount,
+}
+
+pub(crate) enum HTLCStatus {
+    Pending,
+    Succeeded,
+    Failed,
+}
+
+pub(crate) struct MillisatAmount(Option<u64>);
+
+impl fmt::Display for MillisatAmount {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.0 {
+            Some(amt) => write!(f, "{}", amt),
+            None => write!(f, "unknown"),
+        }
+    }
+}
+
 type ChainMonitor = chainmonitor::ChainMonitor<
     InMemorySigner,
     Arc<dyn Filter + Send + Sync>,
@@ -468,9 +812,65 @@ pub(crate) type PeerManager = SimpleArcPeerManager<
 
 type OnionMessenger = SimpleArcOnionMessenger<FilesystemLogger>;
 
+pub struct FundedTx {
+    pub changepos: i64,
+    pub hex: String,
+}
+
+pub struct SignedTx {
+    pub complete: bool,
+    pub hex: String,
+}
+
 #[derive(Clone)]
 pub struct LdkBitcoindClient {
     pub bitcoind_client: Arc<Client>,
+}
+
+impl LdkBitcoindClient {
+    pub fn create_raw_transaction(&self, outputs: HashMap<String, Amount>) -> String {
+        self.bitcoind_client
+            .create_raw_transaction_hex(&vec![], &outputs, None, None)
+            .unwrap()
+    }
+
+    pub fn fund_raw_transaction(&self, raw_tx: String) -> FundedTx {
+        let options = FundRawTransactionOptions {
+            fee_rate: Some(
+                Amount::from_sat(
+                    self.get_est_sat_per_1000_weight(ConfirmationTarget::Normal) as u64
+                ), // used to divide by 250.0??
+            ),
+            replaceable: Some(false),
+            ..Default::default()
+        };
+
+        let funded_tx = self
+            .bitcoind_client
+            .fund_raw_transaction(raw_tx, Some(&options), None)
+            .unwrap();
+
+        FundedTx {
+            changepos: funded_tx.change_position as i64,
+            hex: hex::encode(funded_tx.hex),
+        }
+    }
+
+    pub fn sign_raw_transaction_with_wallet(&self, tx_hex: String) -> SignedTx {
+        let signed_tx = self
+            .bitcoind_client
+            .sign_raw_transaction_with_wallet(tx_hex, None, None)
+            .unwrap();
+
+        SignedTx {
+            complete: signed_tx.complete,
+            hex: hex::encode(signed_tx.hex),
+        }
+    }
+
+    pub fn get_new_address(&self) -> Address {
+        self.bitcoind_client.get_new_address(None, None).unwrap()
+    }
 }
 
 impl BlockSource for &LdkBitcoindClient {
@@ -604,5 +1004,46 @@ impl BroadcasterInterface for LdkBitcoindClient {
                 }
             }
         }
+    }
+}
+
+pub fn to_vec(hex: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(hex.len() / 2);
+
+    let mut b = 0;
+    for (idx, c) in hex.as_bytes().iter().enumerate() {
+        b <<= 4;
+        match *c {
+            b'A'..=b'F' => b |= c - b'A' + 10,
+            b'a'..=b'f' => b |= c - b'a' + 10,
+            b'0'..=b'9' => b |= c - b'0',
+            _ => return None,
+        }
+        if (idx & 1) == 1 {
+            out.push(b);
+            b = 0;
+        }
+    }
+
+    Some(out)
+}
+
+#[inline]
+pub fn hex_str(value: &[u8]) -> String {
+    let mut res = String::with_capacity(64);
+    for v in value {
+        res += &format!("{:02x}", v);
+    }
+    res
+}
+
+pub fn to_compressed_pubkey(hex: &str) -> Option<PublicKey> {
+    let data = match to_vec(&hex[0..33 * 2]) {
+        Some(bytes) => bytes,
+        None => return None,
+    };
+    match PublicKey::from_slice(&data) {
+        Ok(pk) => Some(pk),
+        Err(_) => None,
     }
 }
