@@ -22,7 +22,8 @@ diesel::table! {
 }
 
 diesel::table! {
-    key_values (id) {
+    key_values (key_value_id) {
+        key_value_id -> Text,
         id -> Text,
         node_id -> Text,
         data_value -> Binary,
@@ -55,7 +56,6 @@ diesel::table! {
 
 diesel::joinable!(channel_monitors -> nodes (node_id));
 diesel::joinable!(channel_updates -> nodes (node_id));
-diesel::joinable!(key_values -> nodes (node_id));
 diesel::joinable!(node_keys -> master_keys (master_key_id));
 diesel::joinable!(nodes -> node_keys (key_id));
 

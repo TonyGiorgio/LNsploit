@@ -8,6 +8,7 @@ lightning = { version = "0.0.111", features = ["max_level_trace"] }
 lightning-block-sync = { version = "0.0.111", features = [ "rpc-client" ] }
 lightning-net-tokio = { version = "0.0.111" }
 lightning-invoice = { version = "0.19" }
+lightning-background-processor = { version = "0.0.111" }
 bip32 = "0.4.0"
 bitcoin = "0.29.1"
 bitcoin-bech32 = "0.12"

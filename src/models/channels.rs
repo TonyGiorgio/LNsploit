@@ -65,6 +65,7 @@ pub struct NewChannelUpdate<'a> {
 
 #[derive(Queryable)]
 pub struct KeyValue {
+    pub key_value_id: String,
     pub id: String,
     pub node_id: String,
     pub data_value: Vec<u8>,
@@ -73,6 +74,7 @@ pub struct KeyValue {
 #[derive(Insertable)]
 #[diesel(table_name = key_values)]
 pub struct NewKeyValue<'a> {
+    pub key_value_id: &'a str,
     pub id: &'a str,
     pub node_id: &'a str,
     pub data_value: Vec<u8>,
@@ -420,7 +422,9 @@ impl KVStorePersister for KVNodePersister {
         match key_value_list.len() {
             0 => {
                 // no channel monitor for this node & outpoint, create
+                let new_key_value_id = Uuid::new_v4().to_string();
                 let new_key_value = NewKeyValue {
+                    key_value_id: String::as_str(&new_key_value_id),
                     id: key,
                     node_id: String::as_str(&self.node_db_id),
                     data_value: object.encode(),
