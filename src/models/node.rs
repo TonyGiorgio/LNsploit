@@ -374,6 +374,30 @@ impl RunnableNode {
             IgnoringMessageHandler {},
         ));
 
+        // init networking
+        let peer_manager_connection_handler = peer_manager.clone();
+        // generate random port number because who cares
+        let mut rng = rand::thread_rng();
+        let listening_port = rng.gen_range(1000, 65535);
+        tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", listening_port))
+                .await
+                .expect(
+                    "Failed to bind to listen port - is something else already listening on it?",
+                );
+            loop {
+                let peer_mgr = peer_manager_connection_handler.clone();
+                let tcp_stream = listener.accept().await.unwrap().0;
+                tokio::spawn(async move {
+                    lightning_net_tokio::setup_inbound(
+                        peer_mgr.clone(),
+                        tcp_stream.into_std().unwrap(),
+                    )
+                    .await;
+                });
+            }
+        });
+
         return Ok(RunnableNode {
             db: db.clone(),
             db_id: db_id.clone(),
