@@ -13,6 +13,7 @@ use lightning::chain::channelmonitor::ChannelMonitorUpdate;
 use lightning::chain::keysinterface::{KeysInterface, Sign};
 use lightning::chain::transaction::OutPoint;
 use lightning::chain::ChannelMonitorUpdateErr;
+use lightning::routing::scoring::{ProbabilisticScorer, ProbabilisticScoringParameters};
 use lightning::util::persist::KVStorePersister;
 use lightning::util::ser::{Readable, ReadableArgs, Writeable, Writer};
 use std::collections::HashMap;
@@ -369,6 +370,42 @@ impl KVNodePersister {
 
     pub fn persist_network(&self, network_graph: &NetworkGraph) -> std::io::Result<()> {
         return self.persist("network", network_graph);
+    }
+
+    pub fn read_scorer(
+        &self,
+        graph: Arc<NetworkGraph>,
+        logger: Arc<FilesystemLogger>,
+    ) -> ProbabilisticScorer<Arc<NetworkGraph>, Arc<FilesystemLogger>> {
+        let params = ProbabilisticScoringParameters::default();
+        let (already_init, kv_value) = match self.read_value("prob_scorer") {
+            Ok(kv_value) => {
+                // check if kv value is filled or not
+                if kv_value.is_empty() {
+                    (false, vec![])
+                } else {
+                    (true, kv_value)
+                }
+            }
+            Err(_) => (false, vec![]),
+        };
+
+        if already_init {
+            let mut readable_kv_value = Cursor::new(kv_value);
+            let args = (params.clone(), Arc::clone(&graph), Arc::clone(&logger));
+            if let Ok(scorer) = ProbabilisticScorer::read(&mut readable_kv_value, args) {
+                // println!("Reading {:?} took {}s", path, now.elapsed().as_secs_f64());
+                return scorer;
+            }
+        }
+        ProbabilisticScorer::new(params, graph, logger)
+    }
+
+    pub fn persist_scroer(
+        &self,
+        scorer: &ProbabilisticScorer<Arc<NetworkGraph>, Arc<FilesystemLogger>>,
+    ) -> std::io::Result<()> {
+        return self.persist("prob_scorer", scorer);
     }
 }
 
