@@ -20,14 +20,23 @@ use lightning::chain::{self, Filter, Watch};
 use lightning::chain::{chainmonitor, BestBlock};
 use lightning::ln::channelmanager::{self, ChannelManagerReadArgs};
 use lightning::ln::channelmanager::{ChainParameters, SimpleArcChannelManager};
+use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, SimpleArcPeerManager};
+use lightning::onion_message::SimpleArcOnionMessenger;
 use lightning::routing::gossip::{self, P2PGossipSync};
 use lightning::util::config::UserConfig;
+use lightning::util::logger::{Logger, Record};
 use lightning::util::ser::ReadableArgs;
+use lightning_block_sync::init;
+use lightning_block_sync::SpvClient;
 use lightning_block_sync::{
     poll, AsyncBlockSourceResult, BlockHeaderData, BlockSource, BlockSourceError, UnboundedCache,
 };
+use lightning_net_tokio::SocketDescriptor;
+use rand::Rng;
 use std::io::Cursor;
+use std::ops::Deref;
 use std::sync::Arc;
+use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 
 #[derive(Queryable)]
@@ -110,6 +119,14 @@ impl RunnableNode {
             .expect("cannot parse node secret");
         let pubkey = PublicKey::from_secret_key(&secp_ctx, &our_network_key).to_string();
 
+        logger.log(&Record::new(
+            lightning::util::logger::Level::Info,
+            format_args!("Starting node {}", pubkey.clone()),
+            "node",
+            "",
+            0,
+        ));
+
         // init the LDK wrapper for bitcoind
         let ldk_bitcoind_client = Arc::new(LdkBitcoindClient { bitcoind_client });
 
@@ -154,10 +171,16 @@ impl RunnableNode {
                     let mut sorted_channel_updates = channel_updates.clone();
                     sorted_channel_updates.sort_by(|a, b| a.update_id.cmp(&b.update_id));
                     for channel_monitor_update in sorted_channel_updates.iter_mut() {
-                        println!(
-                            "applying update {} for {}",
-                            channel_monitor_update.update_id, channel_output.txid
-                        );
+                        logger.log(&Record::new(
+                            lightning::util::logger::Level::Debug,
+                            format_args!(
+                                "applying update {} for {}",
+                                channel_monitor_update.update_id, channel_output.txid
+                            ),
+                            "node",
+                            "",
+                            0,
+                        ));
 
                         match channel_monitor.update_monitor(
                             channel_monitor_update,
@@ -308,7 +331,10 @@ impl RunnableNode {
             logger.clone(),
         ));
         let network_graph_persist = Arc::clone(&network_graph);
+        let network_graph_logger = logger.clone();
         tokio::spawn(async move {
+            // wait for a little bit before trying to save..
+            sleep(Duration::from_secs(5));
             let mut interval = tokio::time::interval(Duration::from_secs(600));
             loop {
                 interval.tick().await;
@@ -316,11 +342,90 @@ impl RunnableNode {
                 if res.is_err() {
                     // Persistence errors here are non-fatal as we can just fetch the routing graph
                     // again later, but they may indicate a disk error which could be fatal elsewhere.
-                    eprintln!(
-                        "Warning: Failed to persist network graph to DB: {:?}",
-                        res.err()
-                    );
+                    network_graph_logger.log(&Record::new(
+                        lightning::util::logger::Level::Error,
+                        format_args!("Failed to persist network graph to DB"),
+                        "node",
+                        "",
+                        0,
+                    ));
                 }
+            }
+        });
+
+        // initialize peer manager
+        let channel_manager: Arc<RunnableChannelManager> = Arc::new(channel_manager);
+        let onion_messenger: Arc<OnionMessenger> =
+            Arc::new(OnionMessenger::new(keys_manager.clone(), logger.clone()));
+        let mut ephemeral_bytes = [0; 32];
+        let current_time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        rand::thread_rng().fill_bytes(&mut ephemeral_bytes);
+        let lightning_msg_handler = MessageHandler {
+            chan_handler: channel_manager.clone(),
+            route_handler: gossip_sync.clone(),
+            onion_message_handler: onion_messenger.clone(),
+        };
+        let peer_manager: Arc<PeerManager> = Arc::new(PeerManager::new(
+            lightning_msg_handler,
+            keys_manager.get_node_secret(Recipient::Node).unwrap(),
+            current_time,
+            &ephemeral_bytes,
+            logger.clone(),
+            IgnoringMessageHandler {},
+        ));
+
+        // init networking
+        let peer_manager_connection_handler = peer_manager.clone();
+        // generate random port number because who cares
+        let listening_port: i32 = rand::thread_rng().gen_range::<i32>(1000, 65535);
+        tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", listening_port))
+                .await
+                .expect(
+                    "Failed to bind to listen port - is something else already listening on it?",
+                );
+            loop {
+                let peer_mgr = peer_manager_connection_handler.clone();
+                let tcp_stream = listener.accept().await.unwrap().0;
+                tokio::spawn(async move {
+                    lightning_net_tokio::setup_inbound(
+                        peer_mgr.clone(),
+                        tcp_stream.into_std().unwrap(),
+                    )
+                    .await;
+                });
+            }
+        });
+
+        // connect and disconnect blocks
+        let validate_block_header_source = ldk_bitcoind_client.clone();
+        if chain_tip.is_none() {
+            chain_tip = Some(
+                init::validate_best_block_header(&mut validate_block_header_source.deref())
+                    .await
+                    .unwrap(),
+            );
+        }
+        let channel_manager_listener = channel_manager.clone();
+        let chain_monitor_listener = chain_monitor.clone();
+        let bitcoind_block_source = ldk_bitcoind_client.clone();
+        let network = bitcoin::Network::Regtest;
+        tokio::spawn(async move {
+            let mut derefed = bitcoind_block_source.deref();
+            let chain_poller = poll::ChainPoller::new(&mut derefed, network);
+            let chain_listener = (chain_monitor_listener, channel_manager_listener);
+            let mut spv_client = SpvClient::new(
+                chain_tip.unwrap(),
+                chain_poller,
+                &mut cache,
+                &chain_listener,
+            );
+            loop {
+                spv_client.poll_best_tip().await.unwrap();
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
         });
 
@@ -352,6 +457,17 @@ pub(crate) type NetworkGraph = gossip::NetworkGraph<Arc<FilesystemLogger>>;
 pub(crate) type RunnableChannelManager =
     SimpleArcChannelManager<ChainMonitor, LdkBitcoindClient, LdkBitcoindClient, FilesystemLogger>;
 
+pub(crate) type PeerManager = SimpleArcPeerManager<
+    SocketDescriptor,
+    ChainMonitor,
+    LdkBitcoindClient,
+    LdkBitcoindClient,
+    dyn chain::Access + Send + Sync,
+    FilesystemLogger,
+>;
+
+type OnionMessenger = SimpleArcOnionMessenger<FilesystemLogger>;
+
 #[derive(Clone)]
 pub struct LdkBitcoindClient {
     pub bitcoind_client: Arc<Client>,
@@ -373,7 +489,7 @@ impl BlockSource for &LdkBitcoindClient {
                             prev_blockhash: res.previous_block_hash.unwrap(),
                             merkle_root: res.merkle_root,
                             time: res.time as u32,
-                            bits: res.bits.parse::<u32>().unwrap(),
+                            bits: u32::from_str_radix(&res.bits, 16).unwrap(),
                             nonce: res.nonce,
                         },
                         height: res.height as u32,
