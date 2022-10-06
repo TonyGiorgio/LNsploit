@@ -331,7 +331,9 @@ impl RunnableNode {
 
         // initialize network graph
         let genesis = genesis_block(bitcoin::Network::Regtest).header.block_hash();
-        let network_graph = Arc::new(kv_persister.read_network(genesis, logger.clone()));
+        let kv_persister_network_graph = kv_persister.clone();
+        let network_graph =
+            Arc::new(kv_persister_network_graph.read_network(genesis, logger.clone()));
 
         let gossip_sync = Arc::new(P2PGossipSync::new(
             Arc::clone(&network_graph),
@@ -346,7 +348,7 @@ impl RunnableNode {
             let mut interval = tokio::time::interval(Duration::from_secs(600));
             loop {
                 interval.tick().await;
-                let res = kv_persister.persist_network(&network_graph_persist);
+                let res = kv_persister_network_graph.persist_network(&network_graph_persist);
                 if res.is_err() {
                     // Persistence errors here are non-fatal as we can just fetch the routing graph
                     // again later, but they may indicate a disk error which could be fatal elsewhere.
@@ -462,6 +464,36 @@ impl RunnableNode {
                 event_handler_logger,
             ));
         };
+
+        // init routing scorer
+        let kv_persister_scorer = kv_persister.clone();
+        let scorer = Arc::new(Mutex::new(
+            kv_persister_scorer.read_scorer(Arc::clone(&network_graph), logger.clone()),
+        ));
+        let scorer_persist = Arc::clone(&scorer);
+        let scorer_logger = logger.clone();
+        // TODO consider moving this to the background runner
+        tokio::spawn(async move {
+            // wait for a little bit before trying to save..
+            sleep(Duration::from_secs(5));
+            let mut interval = tokio::time::interval(Duration::from_secs(600));
+            loop {
+                interval.tick().await;
+                let locked_scorer_persist = scorer_persist.lock().unwrap();
+                let res = kv_persister_scorer.persist_scroer(&locked_scorer_persist);
+                if res.is_err() {
+                    // Persistence errors here are non-fatal as we can just fetch the routing graph
+                    // again later, but they may indicate a disk error which could be fatal elsewhere.
+                    scorer_logger.log(&Record::new(
+                        lightning::util::logger::Level::Error,
+                        format_args!("Failed to persist scorer to DB"),
+                        "node",
+                        "",
+                        0,
+                    ));
+                }
+            }
+        });
 
         return Ok(RunnableNode {
             db: db.clone(),
