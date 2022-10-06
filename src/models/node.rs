@@ -46,7 +46,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::io::Cursor;
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 
@@ -437,6 +437,32 @@ impl RunnableNode {
             }
         });
 
+        // handle ldk events
+        let channel_manager_event_listener = channel_manager.clone();
+        let keys_manager_listener = keys_manager.clone();
+        let inbound_payments: PaymentInfoStorage = Arc::new(Mutex::new(HashMap::new()));
+        let outbound_payments: PaymentInfoStorage = Arc::new(Mutex::new(HashMap::new()));
+        let inbound_pmts_for_events = inbound_payments.clone();
+        let outbound_pmts_for_events = outbound_payments.clone();
+        let network = bitcoin::Network::Regtest;
+        let event_handler_bitcoind = ldk_bitcoind_client.clone();
+        let network_graph_events = network_graph.clone();
+        let event_handler_logger = logger.clone();
+        let handle = tokio::runtime::Handle::current();
+        let event_handler = move |event: &Event| {
+            handle.block_on(handle_ldk_events(
+                &channel_manager_event_listener,
+                &event_handler_bitcoind,
+                &network_graph_events,
+                &keys_manager_listener,
+                &inbound_pmts_for_events,
+                &outbound_pmts_for_events,
+                network,
+                event,
+                event_handler_logger,
+            ));
+        };
+
         return Ok(RunnableNode {
             db: db.clone(),
             db_id: db_id.clone(),
@@ -460,7 +486,7 @@ async fn handle_ldk_events(
     outbound_payments: &PaymentInfoStorage,
     network: Network,
     event: &Event,
-    logger: FilesystemLogger,
+    logger: Arc<FilesystemLogger>,
 ) {
     match event {
         Event::FundingGenerationReady {
