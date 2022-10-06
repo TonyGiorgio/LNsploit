@@ -510,16 +510,48 @@ impl RunnableNode {
             payment::Retry::Timeout(Duration::from_secs(0)), // No ever trying to retry payments
         ));
 
-        let background_processor = BackgroundProcessor::start(
-            kv_persister,
-            invoice_payer.clone(),
-            chain_monitor.clone(),
-            channel_manager.clone(),
-            GossipSync::p2p(gossip_sync.clone()),
-            peer_manager.clone(),
-            logger.clone(),
-            Some(scorer.clone()),
-        );
+        let background_processor_logger = logger.clone();
+        let background_processor_pubkey = pubkey.clone();
+        tokio::spawn(async move {
+            background_processor_logger.log(&Record::new(
+                lightning::util::logger::Level::Info,
+                format_args!(
+                    "starting background processor for node: {}",
+                    background_processor_pubkey.clone()
+                ),
+                "node",
+                "",
+                0,
+            ));
+
+            let _background_processor = BackgroundProcessor::start(
+                kv_persister,
+                invoice_payer.clone(),
+                chain_monitor.clone(),
+                channel_manager.clone(),
+                GossipSync::p2p(gossip_sync.clone()),
+                peer_manager.clone(),
+                background_processor_logger.clone(),
+                Some(scorer.clone()),
+            );
+
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                // Persistence errors here are non-fatal as we can just fetch the routing graph
+                // again later, but they may indicate a disk error which could be fatal elsewhere.
+                background_processor_logger.log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!(
+                        "background processor still running for node: {}",
+                        background_processor_pubkey.clone()
+                    ),
+                    "node",
+                    "",
+                    0,
+                ));
+            }
+        });
 
         return Ok(RunnableNode {
             db: db.clone(),
