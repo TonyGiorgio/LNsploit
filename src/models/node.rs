@@ -20,14 +20,20 @@ use lightning::chain::{self, Filter, Watch};
 use lightning::chain::{chainmonitor, BestBlock};
 use lightning::ln::channelmanager::{self, ChannelManagerReadArgs};
 use lightning::ln::channelmanager::{ChainParameters, SimpleArcChannelManager};
+use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, SimpleArcPeerManager};
+use lightning::onion_message::SimpleArcOnionMessenger;
 use lightning::routing::gossip::{self, P2PGossipSync};
 use lightning::util::config::UserConfig;
+use lightning::util::logger::{Logger, Record};
 use lightning::util::ser::ReadableArgs;
 use lightning_block_sync::{
     poll, AsyncBlockSourceResult, BlockHeaderData, BlockSource, BlockSourceError, UnboundedCache,
 };
+use lightning_net_tokio::SocketDescriptor;
+use rand::Rng;
 use std::io::Cursor;
 use std::sync::Arc;
+use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 
 #[derive(Queryable)]
@@ -110,6 +116,14 @@ impl RunnableNode {
             .expect("cannot parse node secret");
         let pubkey = PublicKey::from_secret_key(&secp_ctx, &our_network_key).to_string();
 
+        logger.log(&Record::new(
+            lightning::util::logger::Level::Info,
+            format_args!("Starting node {}", pubkey.clone()),
+            "node",
+            "",
+            0,
+        ));
+
         // init the LDK wrapper for bitcoind
         let ldk_bitcoind_client = Arc::new(LdkBitcoindClient { bitcoind_client });
 
@@ -154,10 +168,16 @@ impl RunnableNode {
                     let mut sorted_channel_updates = channel_updates.clone();
                     sorted_channel_updates.sort_by(|a, b| a.update_id.cmp(&b.update_id));
                     for channel_monitor_update in sorted_channel_updates.iter_mut() {
-                        println!(
-                            "applying update {} for {}",
-                            channel_monitor_update.update_id, channel_output.txid
-                        );
+                        logger.log(&Record::new(
+                            lightning::util::logger::Level::Debug,
+                            format_args!(
+                                "applying update {} for {}",
+                                channel_monitor_update.update_id, channel_output.txid
+                            ),
+                            "node",
+                            "",
+                            0,
+                        ));
 
                         match channel_monitor.update_monitor(
                             channel_monitor_update,
@@ -308,7 +328,10 @@ impl RunnableNode {
             logger.clone(),
         ));
         let network_graph_persist = Arc::clone(&network_graph);
+        let network_graph_logger = logger.clone();
         tokio::spawn(async move {
+            // wait for a little bit before trying to save..
+            sleep(Duration::from_secs(5));
             let mut interval = tokio::time::interval(Duration::from_secs(600));
             loop {
                 interval.tick().await;
@@ -316,13 +339,40 @@ impl RunnableNode {
                 if res.is_err() {
                     // Persistence errors here are non-fatal as we can just fetch the routing graph
                     // again later, but they may indicate a disk error which could be fatal elsewhere.
-                    eprintln!(
-                        "Warning: Failed to persist network graph to DB: {:?}",
-                        res.err()
-                    );
+                    network_graph_logger.log(&Record::new(
+                        lightning::util::logger::Level::Error,
+                        format_args!("Failed to persist network graph to DB"),
+                        "node",
+                        "",
+                        0,
+                    ));
                 }
             }
         });
+
+        // initialize peer manager
+        let channel_manager: Arc<RunnableChannelManager> = Arc::new(channel_manager);
+        let onion_messenger: Arc<OnionMessenger> =
+            Arc::new(OnionMessenger::new(keys_manager.clone(), logger.clone()));
+        let mut ephemeral_bytes = [0; 32];
+        let current_time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        rand::thread_rng().fill_bytes(&mut ephemeral_bytes);
+        let lightning_msg_handler = MessageHandler {
+            chan_handler: channel_manager.clone(),
+            route_handler: gossip_sync.clone(),
+            onion_message_handler: onion_messenger.clone(),
+        };
+        let peer_manager: Arc<PeerManager> = Arc::new(PeerManager::new(
+            lightning_msg_handler,
+            keys_manager.get_node_secret(Recipient::Node).unwrap(),
+            current_time,
+            &ephemeral_bytes,
+            logger.clone(),
+            IgnoringMessageHandler {},
+        ));
 
         return Ok(RunnableNode {
             db: db.clone(),
@@ -351,6 +401,17 @@ pub(crate) type NetworkGraph = gossip::NetworkGraph<Arc<FilesystemLogger>>;
 
 pub(crate) type RunnableChannelManager =
     SimpleArcChannelManager<ChainMonitor, LdkBitcoindClient, LdkBitcoindClient, FilesystemLogger>;
+
+pub(crate) type PeerManager = SimpleArcPeerManager<
+    SocketDescriptor,
+    ChainMonitor,
+    LdkBitcoindClient,
+    LdkBitcoindClient,
+    dyn chain::Access + Send + Sync,
+    FilesystemLogger,
+>;
+
+type OnionMessenger = SimpleArcOnionMessenger<FilesystemLogger>;
 
 #[derive(Clone)]
 pub struct LdkBitcoindClient {
