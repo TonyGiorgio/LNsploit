@@ -30,10 +30,12 @@ use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, Simple
 use lightning::ln::{PaymentHash, PaymentPreimage, PaymentSecret};
 use lightning::onion_message::SimpleArcOnionMessenger;
 use lightning::routing::gossip::{self, NodeId, P2PGossipSync};
+use lightning::routing::scoring::ProbabilisticScorer;
 use lightning::util::config::UserConfig;
 use lightning::util::events::{Event, PaymentPurpose};
 use lightning::util::logger::{Logger, Record};
 use lightning::util::ser::ReadableArgs;
+use lightning_background_processor::{BackgroundProcessor, GossipSync};
 use lightning_block_sync::init;
 use lightning_block_sync::SpvClient;
 use lightning_block_sync::{
@@ -345,8 +347,6 @@ impl RunnableNode {
         let network_graph_persist = Arc::clone(&network_graph);
         let network_graph_logger = logger.clone();
         tokio::spawn(async move {
-            // wait for a little bit before trying to save..
-            sleep(Duration::from_secs(5));
             let mut interval = tokio::time::interval(Duration::from_secs(600));
             loop {
                 interval.tick().await;
@@ -463,7 +463,7 @@ impl RunnableNode {
                 &outbound_pmts_for_events,
                 network,
                 event,
-                event_handler_logger,
+                event_handler_logger.clone(),
             ));
         };
 
@@ -476,8 +476,6 @@ impl RunnableNode {
         let scorer_logger = logger.clone();
         // TODO consider moving this to the background runner
         tokio::spawn(async move {
-            // wait for a little bit before trying to save..
-            sleep(Duration::from_secs(5));
             let mut interval = tokio::time::interval(Duration::from_secs(600));
             loop {
                 interval.tick().await;
@@ -511,6 +509,17 @@ impl RunnableNode {
             event_handler,
             payment::Retry::Timeout(Duration::from_secs(0)), // No ever trying to retry payments
         ));
+
+        let background_processor = BackgroundProcessor::start(
+            kv_persister,
+            invoice_payer.clone(),
+            chain_monitor.clone(),
+            channel_manager.clone(),
+            GossipSync::p2p(gossip_sync.clone()),
+            peer_manager.clone(),
+            logger.clone(),
+            Some(scorer.clone()),
+        );
 
         return Ok(RunnableNode {
             db: db.clone(),
@@ -846,12 +855,14 @@ pub(crate) struct PaymentInfo {
 }
 
 pub(crate) type InvoicePayer<E> = payment::InvoicePayer<
-    Arc<ChannelManager>,
+    Arc<RunnableChannelManager>,
     Router,
     Arc<Mutex<ProbabilisticScorer<Arc<NetworkGraph>, Arc<FilesystemLogger>>>>,
     Arc<FilesystemLogger>,
     E,
 >;
+
+type Router = DefaultRouter<Arc<NetworkGraph>, Arc<FilesystemLogger>>;
 
 pub(crate) enum HTLCStatus {
     Pending,

@@ -648,6 +648,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightning-background-processor"
+version = "0.0.111"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0dfef23242b3656fa54a050b5cc4f1f7938d27cbf940c6c9e5b9a08f198f8d86"
+dependencies = [
+ "bitcoin",
+ "lightning",
+ "lightning-rapid-gossip-sync",
+]
+
+[[package]]
 name = "lightning-block-sync"
 version = "0.0.111"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -686,6 +697,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightning-rapid-gossip-sync"
+version = "0.0.111"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff55ab0918a12e5eecf511a0ae924340361dd64213139af689da51c0759f59b8"
+dependencies = [
+ "bitcoin",
+ "lightning",
+]
+
+[[package]]
 name = "lnsploit"
 version = "0.1.0"
 dependencies = [
@@ -702,6 +723,7 @@ dependencies = [
  "futures",
  "hex",
  "lightning",
+ "lightning-background-processor",
  "lightning-block-sync",
  "lightning-invoice",
  "lightning-net-tokio",
