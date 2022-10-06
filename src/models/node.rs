@@ -26,12 +26,15 @@ use lightning::routing::gossip::{self, P2PGossipSync};
 use lightning::util::config::UserConfig;
 use lightning::util::logger::{Logger, Record};
 use lightning::util::ser::ReadableArgs;
+use lightning_block_sync::init;
+use lightning_block_sync::SpvClient;
 use lightning_block_sync::{
     poll, AsyncBlockSourceResult, BlockHeaderData, BlockSource, BlockSourceError, UnboundedCache,
 };
 use lightning_net_tokio::SocketDescriptor;
 use rand::Rng;
 use std::io::Cursor;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
@@ -377,8 +380,7 @@ impl RunnableNode {
         // init networking
         let peer_manager_connection_handler = peer_manager.clone();
         // generate random port number because who cares
-        let mut rng = rand::thread_rng();
-        let listening_port = rng.gen_range(1000, 65535);
+        let listening_port: i32 = rand::thread_rng().gen_range::<i32>(1000, 65535);
         tokio::spawn(async move {
             let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", listening_port))
                 .await
@@ -395,6 +397,35 @@ impl RunnableNode {
                     )
                     .await;
                 });
+            }
+        });
+
+        // connect and disconnect blocks
+        let validate_block_header_source = ldk_bitcoind_client.clone();
+        if chain_tip.is_none() {
+            chain_tip = Some(
+                init::validate_best_block_header(&mut validate_block_header_source.deref())
+                    .await
+                    .unwrap(),
+            );
+        }
+        let channel_manager_listener = channel_manager.clone();
+        let chain_monitor_listener = chain_monitor.clone();
+        let bitcoind_block_source = ldk_bitcoind_client.clone();
+        let network = bitcoin::Network::Regtest;
+        tokio::spawn(async move {
+            let mut derefed = bitcoind_block_source.deref();
+            let chain_poller = poll::ChainPoller::new(&mut derefed, network);
+            let chain_listener = (chain_monitor_listener, channel_manager_listener);
+            let mut spv_client = SpvClient::new(
+                chain_tip.unwrap(),
+                chain_poller,
+                &mut cache,
+                &chain_listener,
+            );
+            loop {
+                spv_client.poll_best_tip().await.unwrap();
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
         });
 
@@ -458,7 +489,7 @@ impl BlockSource for &LdkBitcoindClient {
                             prev_blockhash: res.previous_block_hash.unwrap(),
                             merkle_root: res.merkle_root,
                             time: res.time as u32,
-                            bits: res.bits.parse::<u32>().unwrap(),
+                            bits: u32::from_str_radix(&res.bits, 16).unwrap(),
                             nonce: res.nonce,
                         },
                         height: res.height as u32,
