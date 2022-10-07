@@ -80,6 +80,13 @@ pub struct RunnableNode {
     pub persister: Arc<NodePersister>,
     pub ldk_bitcoind_client: Arc<LdkBitcoindClient>,
     pub logger: Arc<FilesystemLogger>,
+    pub invoice_payer: Arc<InvoicePayer<LdkEventHandler>>,
+    pub peer_manager: Arc<PeerManager>,
+    pub channel_manager: Arc<RunnableChannelManager>,
+    pub network_graph: Arc<NetworkGraph>,
+    pub onion_messenger: Arc<OnionMessenger>,
+    inbound_payments: PaymentInfoStorage,
+    outbound_payments: PaymentInfoStorage,
 }
 
 impl RunnableNode {
@@ -508,6 +515,9 @@ impl RunnableNode {
 
         let background_processor_logger = logger.clone();
         let background_processor_pubkey = pubkey.clone();
+        let background_processor_invoice_payer = invoice_payer.clone();
+        let background_processor_peer_manager = peer_manager.clone();
+        let background_processor_channel_manager = channel_manager.clone();
         tokio::spawn(async move {
             background_processor_logger.log(&Record::new(
                 lightning::util::logger::Level::Info,
@@ -522,11 +532,11 @@ impl RunnableNode {
 
             let _background_processor = BackgroundProcessor::start(
                 kv_persister,
-                invoice_payer.clone(),
+                background_processor_invoice_payer.clone(),
                 chain_monitor.clone(),
-                channel_manager.clone(),
+                background_processor_channel_manager.clone(),
                 GossipSync::p2p(gossip_sync.clone()),
-                peer_manager.clone(),
+                background_processor_peer_manager.clone(),
                 background_processor_logger.clone(),
                 Some(scorer.clone()),
             );
@@ -559,6 +569,13 @@ impl RunnableNode {
             keys_manager,
             ldk_bitcoind_client,
             logger,
+            invoice_payer,
+            peer_manager,
+            channel_manager,
+            network_graph,
+            onion_messenger,
+            inbound_payments,
+            outbound_payments,
         });
     }
 }
