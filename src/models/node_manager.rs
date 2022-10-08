@@ -102,6 +102,17 @@ impl NodeManager {
         node.pay_invoice(invoice)
     }
 
+    pub async fn open_channel(
+        &mut self,
+        node_id: String,
+        peer_pubkey: String,
+        amount_sat: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+
+        node.open_channel(peer_pubkey, amount_sat).await
+    }
+
     pub async fn new_node(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let conn = &mut self.db.get().unwrap();
 

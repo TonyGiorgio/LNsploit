@@ -33,7 +33,7 @@ use lightning::ln::{PaymentHash, PaymentPreimage, PaymentSecret};
 use lightning::onion_message::SimpleArcOnionMessenger;
 use lightning::routing::gossip::{self, NodeId, P2PGossipSync};
 use lightning::routing::scoring::ProbabilisticScorer;
-use lightning::util::config::UserConfig;
+use lightning::util::config::{ChannelHandshakeConfig, ChannelHandshakeLimits, UserConfig};
 use lightning::util::events::{Event, EventHandler, PaymentPurpose};
 use lightning::util::logger::{Logger, Record};
 use lightning::util::ser::ReadableArgs;
@@ -630,6 +630,63 @@ impl RunnableNode {
 
     pub fn list_channels(&self) -> Vec<ChannelDetails> {
         self.channel_manager.list_channels()
+    }
+
+    pub async fn open_channel(
+        &self,
+        pubkey: String,
+        amount_sat: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let pubkey = to_compressed_pubkey(String::as_str(&pubkey.clone()));
+        if pubkey.is_none() {
+            self.logger.log(&Record::new(
+                lightning::util::logger::Level::Error,
+                format_args!("ERROR: could not parse peer pubkey"),
+                "node",
+                "",
+                0,
+            ));
+            return Err("could not parse peer pubkey".into());
+        }
+
+        let config = UserConfig {
+            channel_handshake_limits: ChannelHandshakeLimits {
+                // lnd's max to_self_delay is 2016, so we want to be compatible.
+                their_to_self_delay: 2016,
+                ..Default::default()
+            },
+            channel_handshake_config: ChannelHandshakeConfig {
+                announced_channel: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        match self
+            .channel_manager
+            .create_channel(pubkey.unwrap(), amount_sat, 0, 0, Some(config))
+        {
+            Ok(_) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!("SUCCESS: channel initiated with peer: {:?}", pubkey),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Ok(());
+            }
+            Err(e) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: failed to open channel: {:?}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("failed to open channel".into());
+            }
+        }
     }
 
     pub fn create_invoice(&self, amount_sat: u64) -> Result<String, Box<dyn std::error::Error>> {
