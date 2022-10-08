@@ -9,6 +9,8 @@ use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::consensus::encode;
 use bitcoin::hash_types::BlockHash;
+use bitcoin::hashes::sha256::Hash as Sha256;
+use bitcoin::hashes::Hash;
 use bitcoin::network::constants::Network;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::secp256k1::Secp256k1;
@@ -43,6 +45,7 @@ use lightning_block_sync::{
 };
 use lightning_invoice::payment;
 use lightning_invoice::utils::DefaultRouter;
+use lightning_invoice::{utils, Currency, Invoice};
 use lightning_net_tokio::SocketDescriptor;
 use rand::Rng;
 use std::collections::hash_map::Entry;
@@ -625,6 +628,53 @@ impl RunnableNode {
 
     pub fn list_channels(&self) -> Vec<ChannelDetails> {
         self.channel_manager.list_channels()
+    }
+
+    pub fn create_invoice(&self, amount_sat: u64) -> Result<String, Box<dyn std::error::Error>> {
+        let mut payments = self.inbound_payments.lock().unwrap();
+        let currency = Currency::Regtest;
+
+        let invoice = match utils::create_invoice_from_channelmanager(
+            &self.channel_manager,
+            self.keys_manager.clone(),
+            currency,
+            Some(amount_sat * 1000),
+            "lnsploit".to_string(),
+            1500,
+        ) {
+            Ok(inv) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!("SUCCESS: generated invoice: {}", inv),
+                    "node",
+                    "",
+                    0,
+                ));
+                inv
+            }
+            Err(e) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: could not generate invoice: {}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("could not generate invoice".into());
+            }
+        };
+
+        let payment_hash = PaymentHash(invoice.payment_hash().clone().into_inner());
+        payments.insert(
+            payment_hash,
+            PaymentInfo {
+                preimage: None,
+                secret: Some(invoice.payment_secret().clone()),
+                status: HTLCStatus::Pending,
+                amt_msat: MillisatAmount(Some(amount_sat * 1000)),
+            },
+        );
+        Ok(invoice.to_string())
     }
 }
 
