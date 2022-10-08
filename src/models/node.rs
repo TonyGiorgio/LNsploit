@@ -44,6 +44,7 @@ use lightning_block_sync::{
     poll, AsyncBlockSourceResult, BlockHeaderData, BlockSource, BlockSourceError, UnboundedCache,
 };
 use lightning_invoice::payment;
+use lightning_invoice::payment::PaymentError;
 use lightning_invoice::utils::DefaultRouter;
 use lightning_invoice::{utils, Currency, Invoice};
 use lightning_net_tokio::SocketDescriptor;
@@ -54,6 +55,7 @@ use std::fmt;
 use std::io::Cursor;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::ops::Deref;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
@@ -675,6 +677,82 @@ impl RunnableNode {
             },
         );
         Ok(invoice.to_string())
+    }
+
+    pub fn pay_invoice(&self, invoice_str: String) -> Result<(), Box<dyn std::error::Error>> {
+        let invoice = match Invoice::from_str(&invoice_str) {
+            Ok(inv) => inv,
+            Err(e) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: invalid invoice: {}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("invalid invoice".into());
+            }
+        };
+
+        let status = match self.invoice_payer.pay_invoice(&invoice) {
+            Ok(_payment_id) => {
+                let payee_pubkey = invoice.recover_payee_pub_key();
+                let amt_msat = invoice.amount_milli_satoshis().unwrap();
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!("SUCCESS: sending {} sats to: {}", amt_msat, payee_pubkey),
+                    "node",
+                    "",
+                    0,
+                ));
+                HTLCStatus::Pending
+            }
+            Err(PaymentError::Invoice(e)) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: invalid invoice: {}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("invalid invoice".into());
+            }
+            Err(PaymentError::Routing(e)) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: failed to find route: {:?}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("failed to find route".into());
+            }
+            Err(PaymentError::Sending(e)) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: failed to send payment: {:?}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                HTLCStatus::Failed
+            }
+        };
+        let payment_hash = PaymentHash(invoice.payment_hash().clone().into_inner());
+        let payment_secret = Some(invoice.payment_secret().clone());
+
+        let mut payments = self.outbound_payments.lock().unwrap();
+        payments.insert(
+            payment_hash,
+            PaymentInfo {
+                preimage: None,
+                secret: payment_secret,
+                status,
+                amt_msat: MillisatAmount(invoice.amount_milli_satoshis()),
+            },
+        );
+
+        Ok(())
     }
 }
 
