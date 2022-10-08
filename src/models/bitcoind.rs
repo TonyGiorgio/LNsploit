@@ -71,8 +71,37 @@ impl LdkBitcoindClient {
         }
     }
 
-    pub fn get_new_address(&self) -> Address {
-        self.bitcoind_client.get_new_address(None, None).unwrap()
+    pub fn get_new_address(&self, label: String) -> Result<Address, Box<dyn std::error::Error>> {
+        match self
+            .bitcoind_client
+            .get_new_address(Some(String::as_str(&label.clone())), None)
+        {
+            Ok(addr) => Ok(addr),
+            Err(e) => Err("could not create new address".into()),
+        }
+    }
+
+    pub fn create_wallet(&self, label: String) -> Result<(), Box<dyn std::error::Error>> {
+        match self.bitcoind_client.create_wallet(
+            String::as_str(&label.clone()),
+            None,
+            None,
+            None,
+            None,
+        ) {
+            Ok(res) => {
+                if let Some(warning) = res.warning {
+                    if warning != "" {
+                        return Err(warning.into());
+                    } else {
+                        Ok(())
+                    }
+                } else {
+                    Ok(())
+                }
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 }
 

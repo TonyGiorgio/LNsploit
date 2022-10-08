@@ -619,6 +619,36 @@ impl RunnableNode {
         Ok(())
     }
 
+    pub fn create_wallet(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let create_wallet_bitcoind = self.ldk_bitcoind_client.clone();
+        let create_wallet_pubkey = self.pubkey.clone();
+        let create_wallet_logger = self.logger.clone();
+        tokio::spawn(async move {
+            match create_wallet_bitcoind.create_wallet(create_wallet_pubkey) {
+                Ok(_) => {
+                    create_wallet_logger.log(&Record::new(
+                        lightning::util::logger::Level::Info,
+                        format_args!("SUCCESS: created a wallet for this node"),
+                        "node",
+                        "",
+                        0,
+                    ));
+                }
+                Err(e) => {
+                    create_wallet_logger.log(&Record::new(
+                        lightning::util::logger::Level::Error,
+                        format_args!("ERROR: could not create wallet for this node: {}", e),
+                        "node",
+                        "",
+                        0,
+                    ));
+                }
+            };
+        });
+
+        Ok(())
+    }
+
     pub fn list_channels(&self) -> Vec<ChannelDetails> {
         self.channel_manager.list_channels()
     }
@@ -742,6 +772,16 @@ impl RunnableNode {
                 ));
                 return Err("failed to open channel".into());
             }
+        }
+    }
+
+    pub fn create_address(&self) -> Result<String, Box<dyn std::error::Error>> {
+        match self
+            .ldk_bitcoind_client
+            .get_new_address(self.channel_manager.get_our_node_id().to_string())
+        {
+            Ok(res) => Ok(res.to_string()),
+            Err(e) => Err(e),
         }
     }
 
@@ -1170,7 +1210,10 @@ impl EventHandler for LdkEventHandler {
                 });
             }
             Event::SpendableOutputs { outputs } => {
-                let destination_address = self.bitcoind_client.get_new_address();
+                let destination_address = self
+                    .bitcoind_client
+                    .get_new_address(self.channel_manager.get_our_node_id().to_string())
+                    .unwrap(); // TODO do not unwrap
                 let output_descriptors = &outputs.iter().map(|a| a).collect::<Vec<_>>();
                 let tx_feerate = self
                     .bitcoind_client
