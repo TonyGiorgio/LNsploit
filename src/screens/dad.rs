@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{draw_simulation, draw_welcome, AppEvent, Screen, ScreenFrame};
 use crate::{
     application::AppState,
@@ -84,17 +86,12 @@ impl Screen for ParentScreen {
             Some(self.menu_index),
         );
 
-        let nodes = state.node_manager.clone().lock().await.list_nodes().await;
-
         // Draw nodes list
         draw_selectable_list(
             frame,
             chunks[1],
             "Nodes",
-            &nodes
-                .iter()
-                .map(|n| n.pubkey.clone())
-                .collect::<Vec<String>>(),
+            &state.cached_nodes_list,
             (false, false),
             None,
         );
@@ -128,6 +125,16 @@ impl Screen for ParentScreen {
             match event.code {
                 KeyCode::Char('N') => {
                     let _ = state.node_manager.clone().lock().await.new_node().await;
+
+                    // Cache invalidation!
+                    let nodes_list = {
+                        let nodes = state.node_manager.clone().lock().await.list_nodes().await;
+                        nodes
+                            .iter()
+                            .map(|n| n.pubkey.clone())
+                            .collect::<Vec<String>>()
+                    };
+                    state.cached_nodes_list = Arc::new(nodes_list);
                 }
                 KeyCode::Enter => return Ok(self.handle_enter()),
                 KeyCode::Up => {

@@ -27,6 +27,7 @@ use tui::{backend::CrosstermBackend, Terminal};
 pub struct AppState {
     pub node_manager: Arc<Mutex<NodeManager>>,
     pub router: Router,
+    pub cached_nodes_list: Arc<Vec<String>>,
 }
 
 pub struct Application {
@@ -54,15 +55,25 @@ impl Application {
         let node_manager =
             NodeManager::new(db.clone(), Arc::new(bitcoind_client), logger.clone()).await;
         let node_manager = Arc::new(Mutex::new(node_manager));
+
+        let nodes_list = {
+            let nodes = node_manager.clone().lock().await.list_nodes().await;
+            nodes
+                .iter()
+                .map(|n| n.pubkey.clone())
+                .collect::<Vec<String>>()
+        };
+
         let mut state = AppState {
             node_manager,
             router: Router::new(),
+            cached_nodes_list: Arc::new(nodes_list),
         };
 
         let mut screen = ParentScreen::new();
 
         loop {
-            let current_route = state.get_current_route();
+            let current_route = state.router.get_current_route();
 
             logger.log(&Record::new(
                 lightning::util::logger::Level::Debug,
