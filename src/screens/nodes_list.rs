@@ -31,8 +31,8 @@ impl NodesListScreen {
         }
     }
 
-    fn handle_enter_node(&self, pubkey: String) -> Option<Action> {
-        Some(Action::Push(Location::Node(pubkey)))
+    fn handle_enter_node(&self, pubkey: String, node_id: String) -> Option<Action> {
+        Some(Action::Push(Location::Node(pubkey, node_id)))
     }
 }
 
@@ -78,9 +78,10 @@ impl Screen for NodesListScreen {
                         self.refresh_list = true;
                     } else {
                         // selected a certain node, go to the node screen
-                        return Ok(
-                            self.handle_enter_node(self.cached_nodes[selected - 1].pubkey.clone())
-                        );
+                        return Ok(self.handle_enter_node(
+                            self.cached_nodes[selected - 1].pubkey.clone(),
+                            self.cached_nodes[selected - 1].id.clone(),
+                        ));
                     }
                 }
                 KeyCode::Up => {

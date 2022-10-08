@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 pub enum Location {
     Home,
     NodesList,
-    Node(String),
+    Node(String, String),
 }
 
 pub enum Action {
@@ -44,7 +44,9 @@ impl Router {
         match location {
             Location::Home => Box::new(HomeScreen::new()),
             Location::NodesList => Box::new(NodesListScreen::new(self.node_manager.clone())),
-            Location::Node(pubkey) => Box::new(NodeScreen::new(self.node_manager.clone(), pubkey)),
+            Location::Node(pubkey, node_id) => {
+                Box::new(NodeScreen::new(self.node_manager.clone(), pubkey, node_id))
+            }
         }
     }
 }

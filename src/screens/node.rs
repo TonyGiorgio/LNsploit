@@ -15,10 +15,11 @@ pub struct NodeScreen {
     node_manager: Arc<Mutex<NodeManager>>,
     state: ListState,
     pubkey: String,
+    node_id: String,
 }
 
 impl NodeScreen {
-    pub fn new(node_manager: Arc<Mutex<NodeManager>>, pubkey: String) -> Self {
+    pub fn new(node_manager: Arc<Mutex<NodeManager>>, pubkey: String, node_id: String) -> Self {
         let mut state = ListState::default();
         state.select(Some(0));
 
@@ -26,6 +27,7 @@ impl NodeScreen {
             node_manager,
             state,
             pubkey,
+            node_id,
         }
     }
 }
@@ -33,7 +35,7 @@ impl NodeScreen {
 #[async_trait]
 impl Screen for NodeScreen {
     async fn paint(&mut self, frame: &mut ScreenFrame) {
-        let items = vec![ListItem::new("[Back]")];
+        let items = vec![ListItem::new("Connect")];
         let list = List::new(items)
             .block(
                 Block::default()
@@ -54,7 +56,15 @@ impl Screen for NodeScreen {
             let list_items = 1;
 
             match event.code {
-                KeyCode::Enter => {}
+                KeyCode::Enter => {
+                    self.node_manager
+                        .clone()
+                        .lock()
+                        .await
+                        .connect_peer(self.node_id.clone(), String::from("")) // TODO peer connection string
+                        .await
+                        .expect("cannot connect"); // TODO delete
+                }
                 KeyCode::Up => {
                     if selected == 0 {
                         self.state.select(Some(list_items - 1));

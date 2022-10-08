@@ -9,13 +9,14 @@ use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::SqliteConnection;
 use rand_core::OsRng;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
 pub struct NodeManager {
     db: Pool<ConnectionManager<SqliteConnection>>,
-    nodes: Arc<Mutex<Vec<RunnableNode>>>,
+    nodes: HashMap<String, Arc<RunnableNode>>,
     bitcoind_client: Arc<Client>,
     logger: Arc<FilesystemLogger>,
 }
@@ -27,14 +28,32 @@ impl NodeManager {
         logger: Arc<FilesystemLogger>,
     ) -> Self {
         let mut node_manager = Self {
-            db,
-            bitcoind_client,
-            nodes: Arc::new(Mutex::new(vec![])),
-            logger,
+            db: db.clone(),
+            bitcoind_client: bitcoind_client.clone(),
+            nodes: HashMap::new(),
+            logger: logger.clone(),
         };
 
         // check to make sure at least one master key has been initialized
         node_manager.check_keys();
+
+        // start and store all the nodes in the list
+        let node_list = node_manager.list_nodes().await;
+        for node_item in node_list {
+            let runnable_node_logger = logger.clone();
+            let runnable_node = RunnableNode::new(
+                db.clone(),
+                node_item.id.clone(),
+                node_item.key_id.clone(),
+                bitcoind_client.clone(),
+                runnable_node_logger.clone(),
+            )
+            .await
+            .expect("could not start node"); // TODO do not panic
+            node_manager
+                .nodes
+                .insert(node_item.id.clone(), Arc::new(runnable_node));
+        }
 
         node_manager
     }
@@ -43,6 +62,17 @@ impl NodeManager {
         let conn = &mut self.db.get().unwrap();
         let node_list = nodes.load::<Node>(conn).expect("Error loading nodes"); // TODO do not panic
         node_list
+    }
+
+    pub async fn connect_peer(
+        &mut self,
+        node_id: String,
+        peer_connection_string: String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+
+        node.connect_peer(String::from(peer_connection_string))
+            .await
     }
 
     pub async fn new_node(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -103,7 +133,8 @@ impl NodeManager {
             .execute(conn)
             .expect("Error saving new node"); // TODO do not panic here
 
-        self.nodes.lock().await.push(runnable_node);
+        self.nodes
+            .insert(new_node_id.clone(), Arc::new(runnable_node));
 
         Ok(())
     }
