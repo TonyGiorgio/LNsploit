@@ -13,9 +13,22 @@ pub enum Action {
     Pop,
 }
 
+pub enum ActiveBlock {
+    Menu,
+    Nodes,
+    Main(Location),
+}
+
+pub enum HoveredBlock {
+    Menu,
+    Nodes,
+}
+
 pub struct Router {
     screen_stack: Vec<Location>,
     active_route: Location,
+    active_block: ActiveBlock,
+    hovered_block: HoveredBlock,
 }
 
 impl Router {
@@ -24,6 +37,8 @@ impl Router {
         Self {
             screen_stack,
             active_route: Location::Home,
+            active_block: ActiveBlock::Menu,
+            hovered_block: HoveredBlock::Menu,
         }
     }
 

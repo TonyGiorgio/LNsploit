@@ -25,47 +25,20 @@ use tokio::sync::Mutex;
 use tui::{backend::CrosstermBackend, Terminal};
 
 pub struct AppState {
-    navigation_stack: Vec<Location>,
     pub node_manager: Arc<Mutex<NodeManager>>,
     pub router: Router,
-    // pub sub_screen: Box<dyn Screen>,
-}
-
-impl AppState {
-    pub fn get_current_route(&self) -> &Location {
-        self.navigation_stack.last().unwrap_or(&Location::Home)
-    }
+    pub cached_nodes_list: Arc<Vec<String>>,
 }
 
 pub struct Application {
     term: Terminal<CrosstermBackend<Stdout>>,
-    // current_screen: Box<dyn Screen>,
-    // screen: HomeScreen,
-    // state: AppState,
-    // navigation_stack: Vec<Location>,
 }
 
 impl Application {
-    pub async fn new(// db: Pool<ConnectionManager<SqliteConnection>>,
-        // bitcoind_client: Client,
-        // logger: Arc<FilesystemLogger>,
-    ) -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         let term = setup_terminal()?;
 
-        // let node_manager =
-        //     NodeManager::new(db.clone(), Arc::new(bitcoind_client), logger.clone()).await;
-        // let node_manager = Arc::new(Mutex::new(node_manager));
-
-        // let current_screen = HomeScreen::new(node_manager.clone());
-
-        Ok(Self {
-            term,
-            // screen: HomeScreen::new(),
-            //     navigation_stack: vec![Location::Home],
-            //     node_manager,
-            // }, // current_screen: Box::new(current_screen),
-            // navigation_stack: vec![Location::Home],
-        })
+        Ok(Self { term })
     }
 
     pub async fn run(
@@ -82,17 +55,25 @@ impl Application {
         let node_manager =
             NodeManager::new(db.clone(), Arc::new(bitcoind_client), logger.clone()).await;
         let node_manager = Arc::new(Mutex::new(node_manager));
+
+        let nodes_list = {
+            let nodes = node_manager.clone().lock().await.list_nodes().await;
+            nodes
+                .iter()
+                .map(|n| n.pubkey.clone())
+                .collect::<Vec<String>>()
+        };
+
         let mut state = AppState {
-            navigation_stack: vec![Location::Home],
             node_manager,
             router: Router::new(),
-            // sub_screen: WelcomeScreen::new(),
+            cached_nodes_list: Arc::new(nodes_list),
         };
 
         let mut screen = ParentScreen::new();
 
         loop {
-            let current_route = state.get_current_route();
+            let current_route = state.router.get_current_route();
 
             logger.log(&Record::new(
                 lightning::util::logger::Level::Debug,
