@@ -1,15 +1,14 @@
 use super::{AppEvent, Screen, ScreenFrame};
+use crate::application::AppState;
 use crate::models::{Node, NodeManager};
 use crate::router::{Action, Location};
+use crate::widgets::constants::{highlight, white};
 use anyhow::Result;
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tui::{
-    style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, ListState},
-};
+use tui::widgets::{Block, Borders, List, ListItem, ListState};
 
 pub struct NodesListScreen {
     node_manager: Arc<Mutex<NodeManager>>,
@@ -38,11 +37,11 @@ impl NodesListScreen {
 
 #[async_trait]
 impl Screen for NodesListScreen {
-    async fn paint(&mut self, frame: &mut ScreenFrame) {
-        if self.refresh_list {
-            self.cached_nodes = self.node_manager.clone().lock().await.list_nodes().await;
-            self.refresh_list = false
-        }
+    async fn paint(&self, frame: &mut ScreenFrame, app: &AppState) {
+        // if self.refresh_list {
+        //     self.cached_nodes = self.node_manager.clone().lock().await.list_nodes().await;
+        //     self.refresh_list = false
+        // }
 
         // The first item in the list is a "[New Node]" action
         // Kind of a hack though
@@ -56,15 +55,19 @@ impl Screen for NodesListScreen {
 
         let list = List::new(items)
             .block(Block::default().title("Nodes").borders(Borders::ALL))
-            .style(Style::default().fg(Color::White))
-            .highlight_style(Style::default().add_modifier(Modifier::ITALIC))
+            .style(white())
+            .highlight_style(highlight())
             .highlight_symbol(">>");
         let size = frame.size();
 
-        frame.render_stateful_widget(list, size, &mut self.state);
+        // frame.render_stateful_widget(list, size, &mut self.state);
     }
 
-    async fn handle_input(&mut self, event: AppEvent) -> Result<Option<Action>> {
+    async fn handle_input(
+        &mut self,
+        event: AppEvent,
+        app: &mut AppState,
+    ) -> Result<Option<Action>> {
         if let AppEvent::Input(event) = event {
             let selected = self.state.selected().unwrap_or(0);
             let list_items = self.cached_nodes.len() + 1; // + 1 for the [New Node] action

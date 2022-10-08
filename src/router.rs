@@ -1,12 +1,9 @@
-use crate::models::NodeManager;
-use crate::screens::{HomeScreen, NodeScreen, NodesListScreen, Screen};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
+#[derive(Clone, Debug)]
 pub enum Location {
     Home,
     NodesList,
-    Node(String, String),
+    Node(String),
+    Simulation,
 }
 
 pub enum Action {
@@ -16,37 +13,33 @@ pub enum Action {
 }
 
 pub struct Router {
-    screen_stack: Vec<Box<dyn Screen>>,
-    node_manager: Arc<Mutex<NodeManager>>,
+    screen_stack: Vec<Location>,
+    active_route: Location,
 }
 
 impl Router {
-    pub fn new(node_manager: Arc<Mutex<NodeManager>>) -> Self {
+    pub fn new() -> Self {
         let screen_stack = vec![];
         Self {
             screen_stack,
-            node_manager,
+            active_route: Location::Home,
         }
     }
 
-    pub fn go_to(&mut self, action: Action, current: Box<dyn Screen>) -> Box<dyn Screen> {
-        match action {
+    pub fn go_to(&mut self, action: Action) {
+        let next = match action {
             Action::Push(location) => {
-                self.screen_stack.push(current);
-                self.route_to_screen(location)
+                self.screen_stack.push(location.clone());
+                location
             }
-            Action::Replace(location) => self.route_to_screen(location),
-            Action::Pop => self.screen_stack.pop().unwrap_or(current),
-        }
+            Action::Replace(location) => location,
+            Action::Pop => self.screen_stack.pop().unwrap_or(self.active_route.clone()),
+        };
+
+        self.active_route = next;
     }
 
-    fn route_to_screen(&mut self, location: Location) -> Box<dyn Screen> {
-        match location {
-            Location::Home => Box::new(HomeScreen::new()),
-            Location::NodesList => Box::new(NodesListScreen::new(self.node_manager.clone())),
-            Location::Node(pubkey, node_id) => {
-                Box::new(NodeScreen::new(self.node_manager.clone(), pubkey, node_id))
-            }
-        }
+    pub fn get_current_route(&self) -> &Location {
+        &self.active_route
     }
 }

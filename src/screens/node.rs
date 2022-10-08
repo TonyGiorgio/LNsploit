@@ -1,15 +1,14 @@
 use super::{AppEvent, Screen, ScreenFrame};
-use crate::models::NodeManager;
+use crate::application::AppState;
 use crate::router::Action;
+use crate::widgets::constants::white;
+use crate::{models::NodeManager, widgets::constants::highlight};
 use anyhow::Result;
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tui::{
-    style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, ListState},
-};
+use tui::widgets::{Block, Borders, List, ListItem, ListState};
 
 pub struct NodeScreen {
     node_manager: Arc<Mutex<NodeManager>>,
@@ -34,23 +33,27 @@ impl NodeScreen {
 
 #[async_trait]
 impl Screen for NodeScreen {
-    async fn paint(&mut self, frame: &mut ScreenFrame) {
-        let items = vec![ListItem::new("Connect")];
+    async fn paint(&self, frame: &mut ScreenFrame, app: &AppState) {
+        let items = vec![ListItem::new("[Back]")];
         let list = List::new(items)
             .block(
                 Block::default()
                     .title(self.pubkey.clone())
                     .borders(Borders::ALL),
             )
-            .style(Style::default().fg(Color::White))
-            .highlight_style(Style::default().add_modifier(Modifier::ITALIC))
+            .style(white())
+            .highlight_style(highlight())
             .highlight_symbol(">>");
         let size = frame.size();
 
-        frame.render_stateful_widget(list, size, &mut self.state);
+        // frame.render_stateful_widget(list, size, &mut self.state);
     }
 
-    async fn handle_input(&mut self, event: AppEvent) -> Result<Option<Action>> {
+    async fn handle_input(
+        &mut self,
+        event: AppEvent,
+        app: &mut AppState,
+    ) -> Result<Option<Action>> {
         if let AppEvent::Input(event) = event {
             let selected = self.state.selected().unwrap_or(0);
             let list_items = 1;
