@@ -3,7 +3,7 @@ use crate::{
     application::AppState,
     handlers::{on_down_press_handler, on_up_press_handler},
     router::{Action, Location},
-    widgets::draw::draw_selectable_list,
+    widgets::{constants::white, draw::draw_selectable_list},
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -13,7 +13,8 @@ use crossterm::event::KeyCode;
 use tui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Style},
-    widgets::{Block, Borders, ListState},
+    text::Text,
+    widgets::{Block, Borders, ListState, Paragraph},
 };
 
 const MAIN_MENU: [&str; 5] = [
@@ -109,10 +110,12 @@ impl Screen for ParentScreen {
             _ => draw_welcome(frame, horizontal_chunks[1]),
         };
 
-        let footer_block = Block::default()
-            .title("Keymap")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::LightBlue));
+        let footer_block = Paragraph::new(Text::from("N: Create new node")).block(
+            Block::default()
+                .title("Keymap")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::LightBlue)),
+        );
         frame.render_widget(footer_block, parent_chunks[1]);
     }
 
@@ -123,6 +126,9 @@ impl Screen for ParentScreen {
     ) -> Result<Option<Action>> {
         if let AppEvent::Input(event) = event {
             match event.code {
+                KeyCode::Char('N') => {
+                    let _ = state.node_manager.clone().lock().await.new_node().await;
+                }
                 KeyCode::Enter => return Ok(self.handle_enter()),
                 KeyCode::Up => {
                     let next_index = on_up_press_handler(&MAIN_MENU, Some(self.menu_index));
