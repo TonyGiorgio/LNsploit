@@ -1,7 +1,9 @@
 mod application;
+mod handlers;
 mod models;
 mod router;
 mod screens;
+mod widgets;
 
 use anyhow::Result;
 use application::Application;
@@ -90,9 +92,9 @@ async fn main() -> Result<()> {
     let logger = Arc::new(FilesystemLogger::new(config.logger.location.clone()));
 
     // main application
-    let app = Application::new(pool, bitcoind_client, logger).await?;
+    let app = Application::new().await?;
 
-    if let Err(e) = app.run().await {
+    if let Err(e) = app.run(pool, bitcoind_client, logger).await {
         println!("error starting the application: {}", e);
     };
 
