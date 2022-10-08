@@ -8,6 +8,7 @@ use bitcoincore_rpc::Client;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::SqliteConnection;
+use lightning::ln::channelmanager::ChannelDetails;
 use rand_core::OsRng;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -73,6 +74,12 @@ impl NodeManager {
 
         node.connect_peer(String::from(peer_connection_string))
             .await
+    }
+
+    pub fn list_channels(&mut self, node_id: String) -> Vec<ChannelDetails> {
+        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+
+        node.list_channels()
     }
 
     pub async fn new_node(&mut self) -> Result<(), Box<dyn std::error::Error>> {

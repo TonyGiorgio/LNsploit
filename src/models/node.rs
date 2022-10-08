@@ -24,7 +24,7 @@ use lightning::chain::chaininterface::{BroadcasterInterface, ConfirmationTarget,
 use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager, Recipient};
 use lightning::chain::{self, Filter, Watch};
 use lightning::chain::{chainmonitor, BestBlock};
-use lightning::ln::channelmanager::{self, ChannelManagerReadArgs};
+use lightning::ln::channelmanager::{self, ChannelDetails, ChannelManagerReadArgs};
 use lightning::ln::channelmanager::{ChainParameters, SimpleArcChannelManager};
 use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, SimpleArcPeerManager};
 use lightning::ln::{PaymentHash, PaymentPreimage, PaymentSecret};
@@ -621,6 +621,10 @@ impl RunnableNode {
         }
 
         Ok(())
+    }
+
+    pub fn list_channels(&self) -> Vec<ChannelDetails> {
+        self.channel_manager.list_channels()
     }
 }
 
