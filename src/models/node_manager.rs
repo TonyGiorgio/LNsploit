@@ -113,6 +113,17 @@ impl NodeManager {
         node.open_channel(peer_pubkey, amount_sat).await
     }
 
+    pub async fn close_channel(
+        &mut self,
+        node_id: String,
+        channel_id: String,
+        peer_pubkey: String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+
+        node.close_channel(channel_id, peer_pubkey).await
+    }
+
     pub async fn new_node(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let conn = &mut self.db.get().unwrap();
 

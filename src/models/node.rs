@@ -689,6 +689,71 @@ impl RunnableNode {
         }
     }
 
+    pub async fn close_channel(
+        &self,
+        channel_id: String,
+        peer_pubkey: String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let channel_id_vec = to_vec(String::as_str(&channel_id));
+        if channel_id_vec.is_none() || channel_id_vec.as_ref().unwrap().len() != 32 {
+            self.logger.log(&Record::new(
+                lightning::util::logger::Level::Error,
+                format_args!("ERROR: failed to parse channel_id"),
+                "node",
+                "",
+                0,
+            ));
+            return Err("failed to open channel".into());
+        }
+
+        let mut channel_id = [0; 32];
+        channel_id.copy_from_slice(&channel_id_vec.unwrap());
+
+        let peer_pubkey_vec = match to_vec(String::as_str(&peer_pubkey)) {
+            Some(peer_pubkey_vec) => peer_pubkey_vec,
+            None => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: could not parse pubkey"),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("could not parse pubkey".into());
+            }
+        };
+        let peer_pubkey = match PublicKey::from_slice(&peer_pubkey_vec) {
+            Ok(peer_pubkey) => peer_pubkey,
+            Err(_) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: could not parse pubkey"),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("could not parse pubkey".into());
+            }
+        };
+
+        match self
+            .channel_manager
+            .close_channel(&channel_id, &peer_pubkey)
+        {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: failed to close channel: {:?}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("failed to open channel".into());
+            }
+        }
+    }
+
     pub fn create_invoice(&self, amount_sat: u64) -> Result<String, Box<dyn std::error::Error>> {
         let mut payments = self.inbound_payments.lock().unwrap();
         let currency = Currency::Regtest;
