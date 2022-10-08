@@ -25,7 +25,7 @@ const MAIN_MENU: [&str; 5] = [
 ];
 
 pub struct ParentScreen {
-    menu_index: usize,
+    pub menu_index: usize,
 }
 
 impl ParentScreen {

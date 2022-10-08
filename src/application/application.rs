@@ -14,6 +14,7 @@ use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use diesel::SqliteConnection;
 use futures::executor::block_on;
+use lightning::util::logger::{Logger, Record};
 use std::io::{self, Stdout};
 use std::sync::{
     mpsc::{self, Receiver},
@@ -92,28 +93,103 @@ impl Application {
 
         loop {
             let current_route = state.get_current_route();
+
+            logger.log(&Record::new(
+                lightning::util::logger::Level::Debug,
+                format_args!("starting current route: {:?}", current_route),
+                "application",
+                "",
+                0,
+            ));
+
             self.term.draw(|f| {
+                logger.log(&Record::new(
+                    lightning::util::logger::Level::Debug,
+                    format_args!("about to paint scrren"),
+                    "application",
+                    "",
+                    0,
+                ));
                 let paint_future = screen.paint(f, &state);
                 block_on(paint_future);
+                logger.log(&Record::new(
+                    lightning::util::logger::Level::Debug,
+                    format_args!("got passed paint screen future"),
+                    "application",
+                    "",
+                    0,
+                ));
             })?;
 
             let screen_event = match inputs.recv() {
                 Ok(event) => match event {
                     AppEvent::Quit => {
+                        logger.log(&Record::new(
+                            lightning::util::logger::Level::Debug,
+                            format_args!("handling quit event"),
+                            "application",
+                            "",
+                            0,
+                        ));
                         // state.navigation_stack.pop();
                         break;
                     }
-                    AppEvent::Back => Some(Action::Pop),
-                    event => screen.handle_input(event, &mut state).await?,
+                    AppEvent::Back => {
+                        logger.log(&Record::new(
+                            lightning::util::logger::Level::Debug,
+                            format_args!("handling back event"),
+                            "application",
+                            "",
+                            0,
+                        ));
+                        Some(Action::Pop)
+                    }
+                    event => {
+                        logger.log(&Record::new(
+                            lightning::util::logger::Level::Debug,
+                            format_args!(
+                                "passing event ({:?}) to screen: {:?}",
+                                event, screen.menu_index
+                            ),
+                            "application",
+                            "",
+                            0,
+                        ));
+                        screen.handle_input(event, &mut state).await?
+                    }
                 },
-                Err(err) => return self.close().or(Err(anyhow!(err))),
+                Err(err) => {
+                    logger.log(&Record::new(
+                        lightning::util::logger::Level::Error,
+                        format_args!("error with screen event input: {}", err),
+                        "application",
+                        "",
+                        0,
+                    ));
+                    return self.close().or(Err(anyhow!(err)));
+                }
             };
 
             if let Some(event) = screen_event {
-                // dbg!("screen_event");
+                logger.log(&Record::new(
+                    lightning::util::logger::Level::Debug,
+                    format_args!("screen event: {:?}", event),
+                    "application",
+                    "",
+                    0,
+                ));
                 state.router.go_to(event);
             }
-            // dbg!(state.router.get_current_route());
+            logger.log(&Record::new(
+                lightning::util::logger::Level::Debug,
+                format_args!(
+                    "ending current route: {:?}",
+                    state.router.get_current_route()
+                ),
+                "application",
+                "",
+                0,
+            ));
         }
 
         self.close()
