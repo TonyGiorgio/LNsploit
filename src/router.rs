@@ -6,6 +6,7 @@ pub enum Location {
     Simulation,
 }
 
+#[derive(Debug)]
 pub enum Action {
     Push(Location),
     Replace(Location),

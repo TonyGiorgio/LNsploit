@@ -16,6 +16,7 @@ pub use welcome::*;
 
 use crossterm::event::KeyEvent;
 
+#[derive(Debug)]
 pub enum AppEvent {
     Tick,
     Input(KeyEvent),
