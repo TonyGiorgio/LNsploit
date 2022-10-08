@@ -71,7 +71,7 @@ impl Screen for ParentScreen {
             .constraints([Constraint::Percentage(30), Constraint::Percentage(70)].as_ref())
             .split(parent_chunks[0]);
 
-        let chunks = Layout::default()
+        let nav_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
             .split(horizontal_chunks[0]);
@@ -79,17 +79,17 @@ impl Screen for ParentScreen {
         // Draw main menu
         draw_selectable_list(
             frame,
-            chunks[0],
+            nav_chunks[0],
             "Menu",
             &MAIN_MENU,
-            (false, false),
+            (false, true),
             Some(self.menu_index),
         );
 
         // Draw nodes list
         draw_selectable_list(
             frame,
-            chunks[1],
+            nav_chunks[1],
             "Nodes",
             &state.cached_nodes_list,
             (false, false),
@@ -97,7 +97,7 @@ impl Screen for ParentScreen {
         );
 
         let nodes_block = Block::default().title("Nodes").borders(Borders::ALL);
-        frame.render_widget(nodes_block, chunks[1]);
+        frame.render_widget(nodes_block, nav_chunks[1]);
 
         // dbg!(state.router.get_current_route());
         // HERE'S WHERE THE MAGIC HAPPENS

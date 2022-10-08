@@ -6,7 +6,7 @@ use tui::{
     Frame,
 };
 
-use super::constants::{highlight, white};
+use super::constants::{green, highlight, white, yellow};
 
 pub fn draw_selectable_list<B, S>(
     f: &mut Frame<B>,
@@ -28,12 +28,22 @@ pub fn draw_selectable_list<B, S>(
         .map(|i| ListItem::new(Span::raw(i.as_ref())))
         .collect();
 
+    let border_color_style = {
+        if highlight_state.0 {
+            yellow()
+        } else if highlight_state.1 {
+            green()
+        } else {
+            white()
+        }
+    };
+
     let list = List::new(lst_items)
         .block(
             Block::default()
                 .title(Span::styled(title, white()))
                 .borders(Borders::ALL)
-                .border_style(white()),
+                .border_style(border_color_style),
         )
         .style(white())
         .highlight_style(highlight())

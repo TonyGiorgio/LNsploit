@@ -84,6 +84,7 @@ impl Application {
             ));
 
             self.term.draw(|f| {
+                /*
                 logger.log(&Record::new(
                     lightning::util::logger::Level::Debug,
                     format_args!("about to paint scrren"),
@@ -91,8 +92,10 @@ impl Application {
                     "",
                     0,
                 ));
+                */
                 let paint_future = screen.paint(f, &state);
                 block_on(paint_future);
+                /*
                 logger.log(&Record::new(
                     lightning::util::logger::Level::Debug,
                     format_args!("got passed paint screen future"),
@@ -100,6 +103,7 @@ impl Application {
                     "",
                     0,
                 ));
+                */
             })?;
 
             let screen_event = match inputs.recv() {
@@ -161,16 +165,6 @@ impl Application {
                 ));
                 state.router.go_to(event);
             }
-            logger.log(&Record::new(
-                lightning::util::logger::Level::Debug,
-                format_args!(
-                    "ending current route: {:?}",
-                    state.router.get_current_route()
-                ),
-                "application",
-                "",
-                0,
-            ));
         }
 
         self.close()
