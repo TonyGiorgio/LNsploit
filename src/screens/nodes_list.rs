@@ -31,7 +31,7 @@ impl NodesListScreen {
     }
 
     fn handle_enter_node(&self, pubkey: String, node_id: String) -> Option<Action> {
-        Some(Action::Push(Location::Node(pubkey, node_id)))
+        Some(Action::Push(Location::Node(pubkey)))
     }
 }
 
