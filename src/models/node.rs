@@ -1,58 +1,54 @@
 use super::schema::master_keys::dsl::*;
 use super::schema::node_keys::dsl::*;
 use super::schema::nodes;
-use super::{KVNodePersister, MasterKey, NodeKey, NodePersister};
+use super::{KVNodePersister, LdkBitcoindClient, MasterKey, NodeKey, NodePersister};
 use crate::FilesystemLogger;
 use bip32::{Mnemonic, XPrv};
-use bitcoin::blockdata::block::Block;
 use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::consensus::encode;
 use bitcoin::hash_types::BlockHash;
+use bitcoin::hashes::Hash;
 use bitcoin::network::constants::Network;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::secp256k1::Secp256k1;
-use bitcoin::util::address::Address;
-use bitcoin::util::uint::Uint256;
 use bitcoin::Amount;
 use bitcoin_bech32::WitnessProgram;
-use bitcoincore_rpc::bitcoincore_rpc_json::{EstimateMode, FundRawTransactionOptions};
 use bitcoincore_rpc::{Client, RpcApi};
 use diesel::{prelude::*, r2d2::ConnectionManager, r2d2::Pool};
-use hex;
 use lightning::chain::chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator};
 use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager, Recipient};
 use lightning::chain::{self, Filter, Watch};
 use lightning::chain::{chainmonitor, BestBlock};
-use lightning::ln::channelmanager::{self, ChannelManagerReadArgs};
+use lightning::ln::channelmanager::{self, ChannelDetails, ChannelManagerReadArgs};
 use lightning::ln::channelmanager::{ChainParameters, SimpleArcChannelManager};
 use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, SimpleArcPeerManager};
 use lightning::ln::{PaymentHash, PaymentPreimage, PaymentSecret};
 use lightning::onion_message::SimpleArcOnionMessenger;
 use lightning::routing::gossip::{self, NodeId, P2PGossipSync};
 use lightning::routing::scoring::ProbabilisticScorer;
-use lightning::util::config::UserConfig;
+use lightning::util::config::{ChannelHandshakeConfig, ChannelHandshakeLimits, UserConfig};
 use lightning::util::events::{Event, EventHandler, PaymentPurpose};
 use lightning::util::logger::{Logger, Record};
 use lightning::util::ser::ReadableArgs;
 use lightning_background_processor::{BackgroundProcessor, GossipSync};
 use lightning_block_sync::init;
 use lightning_block_sync::SpvClient;
-use lightning_block_sync::{
-    poll, AsyncBlockSourceResult, BlockHeaderData, BlockSource, BlockSourceError, UnboundedCache,
-};
+use lightning_block_sync::{poll, UnboundedCache};
 use lightning_invoice::payment;
+use lightning_invoice::payment::PaymentError;
 use lightning_invoice::utils::DefaultRouter;
+use lightning_invoice::{utils, Currency, Invoice};
 use lightning_net_tokio::SocketDescriptor;
 use rand::Rng;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Cursor;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::ops::Deref;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 
 #[derive(Queryable)]
@@ -622,6 +618,295 @@ impl RunnableNode {
 
         Ok(())
     }
+
+    pub fn create_wallet(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let create_wallet_bitcoind = self.ldk_bitcoind_client.clone();
+        let create_wallet_pubkey = self.pubkey.clone();
+        let create_wallet_logger = self.logger.clone();
+        tokio::spawn(async move {
+            match create_wallet_bitcoind.create_wallet(create_wallet_pubkey) {
+                Ok(_) => {
+                    create_wallet_logger.log(&Record::new(
+                        lightning::util::logger::Level::Info,
+                        format_args!("SUCCESS: created a wallet for this node"),
+                        "node",
+                        "",
+                        0,
+                    ));
+                }
+                Err(e) => {
+                    create_wallet_logger.log(&Record::new(
+                        lightning::util::logger::Level::Error,
+                        format_args!("ERROR: could not create wallet for this node: {}", e),
+                        "node",
+                        "",
+                        0,
+                    ));
+                }
+            };
+        });
+
+        Ok(())
+    }
+
+    pub fn list_channels(&self) -> Vec<ChannelDetails> {
+        self.channel_manager.list_channels()
+    }
+
+    pub async fn open_channel(
+        &self,
+        pubkey: String,
+        amount_sat: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let pubkey = to_compressed_pubkey(String::as_str(&pubkey.clone()));
+        if pubkey.is_none() {
+            self.logger.log(&Record::new(
+                lightning::util::logger::Level::Error,
+                format_args!("ERROR: could not parse peer pubkey"),
+                "node",
+                "",
+                0,
+            ));
+            return Err("could not parse peer pubkey".into());
+        }
+
+        let config = UserConfig {
+            channel_handshake_limits: ChannelHandshakeLimits {
+                // lnd's max to_self_delay is 2016, so we want to be compatible.
+                their_to_self_delay: 2016,
+                ..Default::default()
+            },
+            channel_handshake_config: ChannelHandshakeConfig {
+                announced_channel: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        match self
+            .channel_manager
+            .create_channel(pubkey.unwrap(), amount_sat, 0, 0, Some(config))
+        {
+            Ok(_) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!("SUCCESS: channel initiated with peer: {:?}", pubkey),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Ok(());
+            }
+            Err(e) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: failed to open channel: {:?}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("failed to open channel".into());
+            }
+        }
+    }
+
+    pub async fn close_channel(
+        &self,
+        channel_id: String,
+        peer_pubkey: String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let channel_id_vec = to_vec(String::as_str(&channel_id));
+        if channel_id_vec.is_none() || channel_id_vec.as_ref().unwrap().len() != 32 {
+            self.logger.log(&Record::new(
+                lightning::util::logger::Level::Error,
+                format_args!("ERROR: failed to parse channel_id"),
+                "node",
+                "",
+                0,
+            ));
+            return Err("failed to open channel".into());
+        }
+
+        let mut channel_id = [0; 32];
+        channel_id.copy_from_slice(&channel_id_vec.unwrap());
+
+        let peer_pubkey_vec = match to_vec(String::as_str(&peer_pubkey)) {
+            Some(peer_pubkey_vec) => peer_pubkey_vec,
+            None => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: could not parse pubkey"),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("could not parse pubkey".into());
+            }
+        };
+        let peer_pubkey = match PublicKey::from_slice(&peer_pubkey_vec) {
+            Ok(peer_pubkey) => peer_pubkey,
+            Err(_) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: could not parse pubkey"),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("could not parse pubkey".into());
+            }
+        };
+
+        match self
+            .channel_manager
+            .close_channel(&channel_id, &peer_pubkey)
+        {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: failed to close channel: {:?}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("failed to open channel".into());
+            }
+        }
+    }
+
+    pub fn create_address(&self) -> Result<String, Box<dyn std::error::Error>> {
+        match self
+            .ldk_bitcoind_client
+            .get_new_address(self.channel_manager.get_our_node_id().to_string())
+        {
+            Ok(res) => Ok(res.to_string()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn create_invoice(&self, amount_sat: u64) -> Result<String, Box<dyn std::error::Error>> {
+        let mut payments = self.inbound_payments.lock().unwrap();
+        let currency = Currency::Regtest;
+
+        let invoice = match utils::create_invoice_from_channelmanager(
+            &self.channel_manager,
+            self.keys_manager.clone(),
+            currency,
+            Some(amount_sat * 1000),
+            "lnsploit".to_string(),
+            1500,
+        ) {
+            Ok(inv) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!("SUCCESS: generated invoice: {}", inv),
+                    "node",
+                    "",
+                    0,
+                ));
+                inv
+            }
+            Err(e) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: could not generate invoice: {}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("could not generate invoice".into());
+            }
+        };
+
+        let payment_hash = PaymentHash(invoice.payment_hash().clone().into_inner());
+        payments.insert(
+            payment_hash,
+            PaymentInfo {
+                preimage: None,
+                secret: Some(invoice.payment_secret().clone()),
+                status: HTLCStatus::Pending,
+                amt_msat: MillisatAmount(Some(amount_sat * 1000)),
+            },
+        );
+        Ok(invoice.to_string())
+    }
+
+    pub fn pay_invoice(&self, invoice_str: String) -> Result<(), Box<dyn std::error::Error>> {
+        let invoice = match Invoice::from_str(&invoice_str) {
+            Ok(inv) => inv,
+            Err(e) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: invalid invoice: {}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("invalid invoice".into());
+            }
+        };
+
+        let status = match self.invoice_payer.pay_invoice(&invoice) {
+            Ok(_payment_id) => {
+                let payee_pubkey = invoice.recover_payee_pub_key();
+                let amt_msat = invoice.amount_milli_satoshis().unwrap();
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!("SUCCESS: sending {} sats to: {}", amt_msat, payee_pubkey),
+                    "node",
+                    "",
+                    0,
+                ));
+                HTLCStatus::Pending
+            }
+            Err(PaymentError::Invoice(e)) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: invalid invoice: {}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("invalid invoice".into());
+            }
+            Err(PaymentError::Routing(e)) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: failed to find route: {:?}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("failed to find route".into());
+            }
+            Err(PaymentError::Sending(e)) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: failed to send payment: {:?}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                HTLCStatus::Failed
+            }
+        };
+        let payment_hash = PaymentHash(invoice.payment_hash().clone().into_inner());
+        let payment_secret = Some(invoice.payment_secret().clone());
+
+        let mut payments = self.outbound_payments.lock().unwrap();
+        payments.insert(
+            payment_hash,
+            PaymentInfo {
+                preimage: None,
+                secret: payment_secret,
+                status,
+                amt_msat: MillisatAmount(invoice.amount_milli_satoshis()),
+            },
+        );
+
+        Ok(())
+    }
 }
 
 pub struct LdkEventHandler {
@@ -925,7 +1210,10 @@ impl EventHandler for LdkEventHandler {
                 });
             }
             Event::SpendableOutputs { outputs } => {
-                let destination_address = self.bitcoind_client.get_new_address();
+                let destination_address = self
+                    .bitcoind_client
+                    .get_new_address(self.channel_manager.get_our_node_id().to_string())
+                    .unwrap(); // TODO do not unwrap
                 let output_descriptors = &outputs.iter().map(|a| a).collect::<Vec<_>>();
                 let tx_feerate = self
                     .bitcoind_client
@@ -1027,201 +1315,6 @@ pub(crate) type PeerManager = SimpleArcPeerManager<
 >;
 
 type OnionMessenger = SimpleArcOnionMessenger<FilesystemLogger>;
-
-pub struct FundedTx {
-    pub changepos: i64,
-    pub hex: String,
-}
-
-pub struct SignedTx {
-    pub complete: bool,
-    pub hex: String,
-}
-
-#[derive(Clone)]
-pub struct LdkBitcoindClient {
-    pub bitcoind_client: Arc<Client>,
-}
-
-impl LdkBitcoindClient {
-    pub fn create_raw_transaction(&self, outputs: HashMap<String, Amount>) -> String {
-        self.bitcoind_client
-            .create_raw_transaction_hex(&vec![], &outputs, None, None)
-            .unwrap()
-    }
-
-    pub fn fund_raw_transaction(&self, raw_tx: String) -> FundedTx {
-        let options = FundRawTransactionOptions {
-            fee_rate: Some(
-                Amount::from_sat(
-                    self.get_est_sat_per_1000_weight(ConfirmationTarget::Normal) as u64
-                ), // used to divide by 250.0??
-            ),
-            replaceable: Some(false),
-            ..Default::default()
-        };
-
-        let funded_tx = self
-            .bitcoind_client
-            .fund_raw_transaction(raw_tx, Some(&options), None)
-            .unwrap();
-
-        FundedTx {
-            changepos: funded_tx.change_position as i64,
-            hex: hex::encode(funded_tx.hex),
-        }
-    }
-
-    pub fn sign_raw_transaction_with_wallet(&self, tx_hex: String) -> SignedTx {
-        let signed_tx = self
-            .bitcoind_client
-            .sign_raw_transaction_with_wallet(tx_hex, None, None)
-            .unwrap();
-
-        SignedTx {
-            complete: signed_tx.complete,
-            hex: hex::encode(signed_tx.hex),
-        }
-    }
-
-    pub fn get_new_address(&self) -> Address {
-        self.bitcoind_client.get_new_address(None, None).unwrap()
-    }
-}
-
-impl BlockSource for &LdkBitcoindClient {
-    fn get_header<'a>(
-        &'a self,
-        header_hash: &'a BlockHash,
-        _height_hint: Option<u32>,
-    ) -> AsyncBlockSourceResult<'a, BlockHeaderData> {
-        Box::pin(async move {
-            let res = self.bitcoind_client.get_block_header_info(header_hash);
-            match res {
-                Ok(res) => {
-                    let converted_res = BlockHeaderData {
-                        header: bitcoin::BlockHeader {
-                            version: res.version,
-                            prev_blockhash: res.previous_block_hash.unwrap(),
-                            merkle_root: res.merkle_root,
-                            time: res.time as u32,
-                            bits: u32::from_str_radix(&res.bits, 16).unwrap(),
-                            nonce: res.nonce,
-                        },
-                        height: res.height as u32,
-                        chainwork: Uint256::from_be_bytes(res.chainwork.try_into().unwrap()),
-                    };
-                    Ok(converted_res)
-                }
-                // TODO verify error type
-                Err(e) => Err(BlockSourceError::transient(e)),
-            }
-        })
-    }
-
-    fn get_block<'a>(&'a self, header_hash: &'a BlockHash) -> AsyncBlockSourceResult<'a, Block> {
-        Box::pin(async move {
-            let res = self.bitcoind_client.get_block(header_hash);
-            match res {
-                Ok(res) => Ok(res),
-                // TODO verify error type
-                Err(e) => Err(BlockSourceError::transient(e)),
-            }
-        })
-    }
-
-    fn get_best_block<'a>(&'a self) -> AsyncBlockSourceResult<(BlockHash, Option<u32>)> {
-        Box::pin(async move {
-            let res = self.bitcoind_client.get_blockchain_info();
-            match res {
-                Ok(res) => Ok((res.best_block_hash, Some(res.blocks as u32))),
-                // TODO verify error type
-                Err(e) => Err(BlockSourceError::transient(e)),
-            }
-        })
-    }
-}
-
-const MIN_FEERATE: u32 = 253;
-
-impl FeeEstimator for LdkBitcoindClient {
-    fn get_est_sat_per_1000_weight(&self, confirmation_target: ConfirmationTarget) -> u32 {
-        match confirmation_target {
-            ConfirmationTarget::Background => {
-                let res = self
-                    .bitcoind_client
-                    .estimate_smart_fee(144, Some(EstimateMode::Economical));
-                match res {
-                    Ok(res) => {
-                        if let Some(fee_rate) = res.fee_rate {
-                            std::cmp::max(MIN_FEERATE, (fee_rate.to_sat() / 4) as u32)
-                        } else {
-                            MIN_FEERATE
-                        }
-                    }
-                    Err(_) => MIN_FEERATE,
-                }
-            }
-            ConfirmationTarget::Normal => {
-                let res = self
-                    .bitcoind_client
-                    .estimate_smart_fee(18, Some(EstimateMode::Conservative));
-                match res {
-                    Ok(res) => {
-                        if let Some(fee_rate) = res.fee_rate {
-                            std::cmp::max(MIN_FEERATE, (fee_rate.to_sat() / 4) as u32)
-                        } else {
-                            // TODO probably not min for normal
-                            MIN_FEERATE
-                        }
-                    }
-                    // TODO probably not min for normal
-                    Err(_) => MIN_FEERATE,
-                }
-            }
-            ConfirmationTarget::HighPriority => {
-                let res = self
-                    .bitcoind_client
-                    .estimate_smart_fee(6, Some(EstimateMode::Conservative));
-                match res {
-                    Ok(res) => {
-                        if let Some(fee_rate) = res.fee_rate {
-                            std::cmp::max(MIN_FEERATE, (fee_rate.to_sat() / 4) as u32)
-                        } else {
-                            // TODO probably not min for high
-                            MIN_FEERATE
-                        }
-                    }
-                    // TODO probably not min for high
-                    Err(_) => MIN_FEERATE,
-                }
-            }
-        }
-    }
-}
-
-impl BroadcasterInterface for LdkBitcoindClient {
-    fn broadcast_transaction(&self, tx: &Transaction) {
-        let res = self.bitcoind_client.send_raw_transaction(tx);
-        // This may error due to RL calling `broadcast_transaction` with the same transaction
-        // multiple times, but the error is safe to ignore.
-        match res {
-            Ok(_) => {}
-            Err(e) => {
-                let err_str = e.to_string();
-                if !err_str.contains("Transaction already in block chain")
-                    && !err_str.contains("Inputs missing or spent")
-                    && !err_str.contains("bad-txns-inputs-missingorspent")
-                    && !err_str.contains("txn-mempool-conflict")
-                    && !err_str.contains("non-BIP68-final")
-                    && !err_str.contains("insufficient fee, rejecting replacement ")
-                {
-                    panic!("{}", e);
-                }
-            }
-        }
-    }
-}
 
 pub fn to_vec(hex: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(hex.len() / 2);

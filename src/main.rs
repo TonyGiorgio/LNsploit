@@ -109,9 +109,6 @@ impl FilesystemLogger {
 }
 impl Logger for FilesystemLogger {
     fn log(&self, record: &Record) {
-        if record.level.to_string() != "INFO" && record.level.to_string() != "WARN" {
-            return;
-        }
         let raw_log = record.args.to_string();
         let log = format!(
             "{} {:<5} [{}:{}] {}\n",

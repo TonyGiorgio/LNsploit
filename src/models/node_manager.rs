@@ -8,6 +8,7 @@ use bitcoincore_rpc::Client;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::SqliteConnection;
+use lightning::ln::channelmanager::ChannelDetails;
 use rand_core::OsRng;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -75,6 +76,63 @@ impl NodeManager {
             .await
     }
 
+    pub fn list_channels(&mut self, node_id: String) -> Vec<ChannelDetails> {
+        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+
+        node.list_channels()
+    }
+
+    pub fn create_invoice(
+        &mut self,
+        node_id: String,
+        amount_sat: u64,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+
+        node.create_invoice(amount_sat)
+    }
+
+    pub fn pay_invoice(
+        &mut self,
+        node_id: String,
+        invoice: String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+
+        node.pay_invoice(invoice)
+    }
+
+    pub async fn open_channel(
+        &mut self,
+        node_id: String,
+        peer_pubkey: String,
+        amount_sat: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+
+        node.open_channel(peer_pubkey, amount_sat).await
+    }
+
+    pub async fn close_channel(
+        &mut self,
+        node_id: String,
+        channel_id: String,
+        peer_pubkey: String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+
+        node.close_channel(channel_id, peer_pubkey).await
+    }
+
+    pub fn create_address(
+        &mut self,
+        node_id: String,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+
+        node.create_address()
+    }
+
     pub async fn new_node(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let conn = &mut self.db.get().unwrap();
 
@@ -136,7 +194,17 @@ impl NodeManager {
         self.nodes
             .insert(new_node_id.clone(), Arc::new(runnable_node));
 
+        self.setup_node(new_node_id.clone());
+
         Ok(())
+    }
+
+    fn setup_node(&mut self, node_id: String) {
+        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+
+        // when a new node is created, create the bitcoind wallet for it
+        node.create_wallet()
+            .expect("could not create bitcoind wallet for node");
     }
 
     /// check_keys will check that a master key has been set up
