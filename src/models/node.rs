@@ -49,6 +49,7 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Cursor;
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
@@ -577,6 +578,49 @@ impl RunnableNode {
             inbound_payments,
             outbound_payments,
         });
+    }
+
+    pub async fn connect_peer(
+        &self,
+        peer_pubkey_and_ip_addr: String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if peer_pubkey_and_ip_addr == "" {
+            self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: connectpeer requires peer connection info: `connectpeer pubkey@host:port`"),
+                    "node",
+                    "",
+                    0,
+                ));
+            return Err("connectpeer requires peer connection info".into());
+        };
+        let (pubkey, peer_addr) = match parse_peer_info(peer_pubkey_and_ip_addr) {
+            Ok(info) => info,
+            Err(e) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: could not parse peer info: {}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err(e.into());
+            }
+        };
+        if connect_peer_if_necessary(pubkey, peer_addr, self.peer_manager.clone())
+            .await
+            .is_ok()
+        {
+            self.logger.log(&Record::new(
+                lightning::util::logger::Level::Info,
+                format_args!("SUCCESS: connected to peer: {}", pubkey),
+                "node",
+                "",
+                0,
+            ));
+        }
+
+        Ok(())
     }
 }
 
@@ -1217,5 +1261,85 @@ pub fn to_compressed_pubkey(hex: &str) -> Option<PublicKey> {
     match PublicKey::from_slice(&data) {
         Ok(pk) => Some(pk),
         Err(_) => None,
+    }
+}
+
+pub(crate) fn parse_peer_info(
+    peer_pubkey_and_ip_addr: String,
+) -> Result<(PublicKey, SocketAddr), std::io::Error> {
+    let mut pubkey_and_addr = peer_pubkey_and_ip_addr.split("@");
+    let pubkey = pubkey_and_addr.next();
+    let peer_addr_str = pubkey_and_addr.next();
+    if peer_addr_str.is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "ERROR: incorrectly formatted peer info. Should be formatted as: `pubkey@host:port`",
+        ));
+    }
+
+    let peer_addr = peer_addr_str
+        .unwrap()
+        .to_socket_addrs()
+        .map(|mut r| r.next());
+    if peer_addr.is_err() || peer_addr.as_ref().unwrap().is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "ERROR: couldn't parse pubkey@host:port into a socket address",
+        ));
+    }
+
+    let pubkey = to_compressed_pubkey(pubkey.unwrap());
+    if pubkey.is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "ERROR: unable to parse given pubkey for node",
+        ));
+    }
+
+    Ok((pubkey.unwrap(), peer_addr.unwrap().unwrap()))
+}
+
+pub(crate) async fn connect_peer_if_necessary(
+    pubkey: PublicKey,
+    peer_addr: SocketAddr,
+    peer_manager: Arc<PeerManager>,
+) -> Result<(), ()> {
+    for node_pubkey in peer_manager.get_peer_node_ids() {
+        if node_pubkey == pubkey {
+            return Ok(());
+        }
+    }
+    let res = do_connect_peer(pubkey, peer_addr, peer_manager).await;
+    res
+}
+
+pub(crate) async fn do_connect_peer(
+    pubkey: PublicKey,
+    peer_addr: SocketAddr,
+    peer_manager: Arc<PeerManager>,
+) -> Result<(), ()> {
+    match lightning_net_tokio::connect_outbound(Arc::clone(&peer_manager), pubkey, peer_addr).await
+    {
+        Some(connection_closed_future) => {
+            let mut connection_closed_future = Box::pin(connection_closed_future);
+            loop {
+                match futures::poll!(&mut connection_closed_future) {
+                    std::task::Poll::Ready(_) => {
+                        return Err(());
+                    }
+                    std::task::Poll::Pending => {}
+                }
+                // Avoid blocking the tokio context by sleeping a bit
+                match peer_manager
+                    .get_peer_node_ids()
+                    .iter()
+                    .find(|peer_node_id| **peer_node_id == pubkey)
+                {
+                    Some(_) => return Ok(()),
+                    None => tokio::time::sleep(Duration::from_millis(10)).await,
+                }
+            }
+        }
+        None => Err(()),
     }
 }
