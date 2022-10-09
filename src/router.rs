@@ -1,4 +1,4 @@
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Location {
     Home,
     NodesList,
@@ -6,19 +6,22 @@ pub enum Location {
     Simulation,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Action {
     Push(Location),
     Replace(Location),
     Pop,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum ActiveBlock {
+    NoneBlock,
     Menu,
     Nodes,
     Main(Location),
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum HoveredBlock {
     Menu,
     Nodes,
@@ -43,19 +46,39 @@ impl Router {
     }
 
     pub fn go_to(&mut self, action: Action) {
-        let next = match action {
+        let (next_route, next_block) = match action {
             Action::Push(location) => {
                 self.screen_stack.push(location.clone());
-                location
+
+                (location.clone(), location_to_active_block(location.clone()))
             }
-            Action::Replace(location) => location,
-            Action::Pop => self.screen_stack.pop().unwrap_or(self.active_route.clone()),
+            Action::Replace(location) => {
+                (location.clone(), location_to_active_block(location.clone()))
+            }
+            Action::Pop => {
+                let location = self.screen_stack.pop().unwrap_or(self.active_route.clone());
+
+                (location.clone(), location_to_active_block(location.clone()))
+            }
         };
 
-        self.active_route = next;
+        self.active_route = next_route;
+        self.active_block = next_block
     }
 
     pub fn get_current_route(&self) -> &Location {
         &self.active_route
+    }
+
+    pub fn get_active_block(&self) -> &ActiveBlock {
+        &self.active_block
+    }
+}
+
+pub fn location_to_active_block(loc: Location) -> ActiveBlock {
+    match loc {
+        Location::Node(n) => ActiveBlock::Main(Location::Node(n)),
+        Location::Simulation => ActiveBlock::Main(Location::Simulation),
+        _ => ActiveBlock::NoneBlock,
     }
 }

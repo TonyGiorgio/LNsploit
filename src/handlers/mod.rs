@@ -1,4 +1,4 @@
-pub fn on_down_press_handler<T>(selection_data: &[T], selection_index: Option<usize>) -> usize {
+pub fn on_down_press_handler(selection_data: Vec<String>, selection_index: Option<usize>) -> usize {
     match selection_index {
         Some(selection_index) => {
             if !selection_data.is_empty() {
@@ -15,7 +15,7 @@ pub fn on_down_press_handler<T>(selection_data: &[T], selection_index: Option<us
     }
 }
 
-pub fn on_up_press_handler<T>(selection_data: &[T], selection_index: Option<usize>) -> usize {
+pub fn on_up_press_handler(selection_data: Vec<String>, selection_index: Option<usize>) -> usize {
     match selection_index {
         Some(selection_index) => {
             if !selection_data.is_empty() {
