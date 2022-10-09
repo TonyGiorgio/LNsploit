@@ -61,6 +61,25 @@ impl ParentScreen {
 
         Some(action)
     }
+
+    fn handle_esc(&mut self, state: &mut AppState) -> Option<Action> {
+        // if the current active block is menu then do nothing
+        match state.router.get_active_block() {
+            ActiveBlock::Menu => return None,
+            _ => (),
+        };
+
+        // reset menu list
+        self.current_menu_list = MAIN_MENU
+            .iter()
+            .map(|x| String::from(*x))
+            .collect::<Vec<String>>();
+
+        // pop the current main screen
+        // TODO consider leaving the current screen
+        // but switching active block to menu instead
+        Some(Action::Pop)
+    }
 }
 
 #[async_trait]
@@ -147,7 +166,7 @@ impl Screen for ParentScreen {
             _ => draw_welcome(frame, horizontal_chunks[1]),
         };
 
-        let footer_block = Paragraph::new(Text::from("N: Create new node")).block(
+        let footer_block = Paragraph::new(Text::from("q: Quit, N: Create new node")).block(
             Block::default()
                 .title("Keymap")
                 .borders(Borders::ALL)
@@ -175,6 +194,11 @@ impl Screen for ParentScreen {
                             .collect::<Vec<String>>()
                     };
                     state.cached_nodes_list = Arc::new(nodes_list);
+                }
+                KeyCode::Esc => {
+                    let new_action = self.handle_esc(state);
+                    self.menu_index = 0; // reset when esc is pressed
+                    return Ok(new_action);
                 }
                 KeyCode::Enter => {
                     let new_action = self.handle_enter();

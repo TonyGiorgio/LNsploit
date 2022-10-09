@@ -36,7 +36,7 @@ pub struct Router {
 
 impl Router {
     pub fn new() -> Self {
-        let screen_stack = vec![];
+        let screen_stack = vec![Location::Home];
         Self {
             screen_stack,
             active_route: Location::Home,
@@ -56,9 +56,18 @@ impl Router {
                 (location.clone(), location_to_active_block(location.clone()))
             }
             Action::Pop => {
-                let location = self.screen_stack.pop().unwrap_or(self.active_route.clone());
+                let next_location = match self.screen_stack.pop() {
+                    Some(_) => self.screen_stack[self.screen_stack.len() - 1].clone(),
+                    None => {
+                        self.screen_stack.push(Location::Home);
+                        Location::Home
+                    }
+                };
 
-                (location.clone(), location_to_active_block(location.clone()))
+                (
+                    next_location.clone(),
+                    location_to_active_block(next_location.clone()),
+                )
             }
         };
 
@@ -70,6 +79,10 @@ impl Router {
         &self.active_route
     }
 
+    pub fn get_stack(&self) -> &Vec<Location> {
+        &self.screen_stack
+    }
+
     pub fn get_active_block(&self) -> &ActiveBlock {
         &self.active_block
     }
@@ -79,6 +92,7 @@ pub fn location_to_active_block(loc: Location) -> ActiveBlock {
     match loc {
         Location::Node(n) => ActiveBlock::Main(Location::Node(n)),
         Location::Simulation => ActiveBlock::Main(Location::Simulation),
+        Location::Home => ActiveBlock::Menu,
         _ => ActiveBlock::NoneBlock,
     }
 }
