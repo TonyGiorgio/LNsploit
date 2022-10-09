@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use super::{draw_simulation, draw_welcome, AppEvent, Screen, ScreenFrame, SIMULATION_MENU};
+use super::{
+    draw_node, draw_simulation, draw_welcome, AppEvent, Screen, ScreenFrame, NODE_MENU,
+    SIMULATION_MENU,
+};
 use crate::{
     application::AppState,
     handlers::{on_down_press_handler, on_up_press_handler},
@@ -42,7 +45,7 @@ impl ParentScreen {
         }
     }
 
-    fn handle_enter(&mut self) -> Option<Action> {
+    fn handle_enter_main(&mut self) -> Option<Action> {
         let item = self.current_menu_list[self.menu_index].clone();
 
         let (action, new_items) = match String::as_str(&item) {
@@ -56,6 +59,20 @@ impl ParentScreen {
             ),
             _ => return None,
         };
+
+        self.current_menu_list = new_items;
+
+        Some(action)
+    }
+
+    fn handle_enter_node(&mut self) -> Option<Action> {
+        let item = self.current_menu_list[self.menu_index].clone();
+
+        let action = Action::Push(Location::Node(item));
+        let new_items = NODE_MENU
+            .iter()
+            .map(|x| String::from(*x))
+            .collect::<Vec<String>>();
 
         self.current_menu_list = new_items;
 
@@ -186,11 +203,32 @@ impl Screen for ParentScreen {
                 };
                 draw_simulation(frame, horizontal_chunks[1], (false, is_active), menu_option)
             }
+            Location::Node(n) => {
+                let (is_active, menu_option) = {
+                    let active_matches = matches!(
+                        state.router.get_active_block(),
+                        ActiveBlock::Main(Location::Node(_))
+                    );
+                    let menu_option = if active_matches {
+                        Some(self.menu_index)
+                    } else {
+                        None
+                    };
+                    (active_matches, menu_option)
+                };
+                draw_node(
+                    frame,
+                    horizontal_chunks[1],
+                    n.clone(),
+                    (false, is_active),
+                    menu_option,
+                )
+            }
             _ => draw_welcome(frame, horizontal_chunks[1]),
         };
 
         let footer_block = Paragraph::new(Text::from(
-            "q: Quit, esc: Back to Menu, L: Nodes Menu, N: Create new node",
+            "q: Quit, esc: Back, L: Nodes Menu, N: Create new node",
         ))
         .block(
             Block::default()
@@ -232,7 +270,13 @@ impl Screen for ParentScreen {
                     return Ok(new_action);
                 }
                 KeyCode::Enter => {
-                    let new_action = self.handle_enter();
+                    // check if enter is on main screen or node screen
+                    let current_route = state.router.get_active_block();
+                    let new_action = match current_route {
+                        ActiveBlock::Menu => self.handle_enter_main(),
+                        ActiveBlock::Nodes => self.handle_enter_node(),
+                        _ => None,
+                    };
                     self.menu_index = 0; // reset when pressed
                     return Ok(new_action);
                 }

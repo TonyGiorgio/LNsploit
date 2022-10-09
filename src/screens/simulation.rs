@@ -8,7 +8,7 @@ use crate::widgets::{constants::white, draw::draw_selectable_list};
 
 use super::ScreenFrame;
 
-const LOGO: &str = "
+const INFO: &str = "
 Hey how is everyone doing? Let's do some SIMULATION
 ";
 
@@ -25,7 +25,7 @@ pub fn draw_simulation(
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)].as_ref())
         .split(chunk);
 
-    let text = Text::from(LOGO);
+    let text = Text::from(INFO);
 
     let block = Paragraph::new(text)
         .style(white())
