@@ -57,7 +57,14 @@ impl Router {
             }
             Action::Pop => {
                 let next_location = match self.screen_stack.pop() {
-                    Some(_) => self.screen_stack[self.screen_stack.len() - 1].clone(),
+                    Some(_) => {
+                        if self.screen_stack.len() == 0 {
+                            self.screen_stack.push(Location::Home);
+                            Location::Home
+                        } else {
+                            self.screen_stack[self.screen_stack.len() - 1].clone()
+                        }
+                    }
                     None => {
                         self.screen_stack.push(Location::Home);
                         Location::Home
@@ -93,6 +100,7 @@ pub fn location_to_active_block(loc: Location) -> ActiveBlock {
         Location::Node(n) => ActiveBlock::Main(Location::Node(n)),
         Location::Simulation => ActiveBlock::Main(Location::Simulation),
         Location::Home => ActiveBlock::Menu,
+        Location::NodesList => ActiveBlock::Nodes,
         _ => ActiveBlock::NoneBlock,
     }
 }

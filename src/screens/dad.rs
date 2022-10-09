@@ -80,6 +80,23 @@ impl ParentScreen {
         // but switching active block to menu instead
         Some(Action::Pop)
     }
+
+    fn handle_enter_node_list(&mut self, state: &mut AppState) -> Option<Action> {
+        // if the current active block is node list then do nothing
+        match state.router.get_active_block() {
+            ActiveBlock::Nodes => return None,
+            _ => (),
+        };
+
+        // set menu list to node list
+        self.current_menu_list = state
+            .cached_nodes_list
+            .iter()
+            .map(|x| String::from(x))
+            .collect::<Vec<String>>();
+
+        Some(Action::Replace(Location::NodesList))
+    }
 }
 
 #[async_trait]
@@ -126,11 +143,17 @@ impl Screen for ParentScreen {
         );
 
         // Draw nodes list
-        // TODO how to switch to node list
         let node_active = {
             match state.router.get_active_block() {
                 &ActiveBlock::Nodes => (false, true),
                 _ => (false, false),
+            }
+        };
+        let node_selected_list = {
+            if node_active.1 {
+                Some(self.menu_index)
+            } else {
+                None
             }
         };
         draw_selectable_list(
@@ -139,7 +162,7 @@ impl Screen for ParentScreen {
             "Nodes",
             &state.cached_nodes_list,
             node_active,
-            None,
+            node_selected_list,
         );
 
         let nodes_block = Block::default().title("Nodes").borders(Borders::ALL);
@@ -166,7 +189,10 @@ impl Screen for ParentScreen {
             _ => draw_welcome(frame, horizontal_chunks[1]),
         };
 
-        let footer_block = Paragraph::new(Text::from("q: Quit, N: Create new node")).block(
+        let footer_block = Paragraph::new(Text::from(
+            "q: Quit, esc: Back to Menu, L: Nodes Menu, N: Create new node",
+        ))
+        .block(
             Block::default()
                 .title("Keymap")
                 .borders(Borders::ALL)
@@ -195,14 +221,19 @@ impl Screen for ParentScreen {
                     };
                     state.cached_nodes_list = Arc::new(nodes_list);
                 }
+                KeyCode::Char('L') => {
+                    let new_action = self.handle_enter_node_list(state);
+                    self.menu_index = 0; // reset when pressed
+                    return Ok(new_action);
+                }
                 KeyCode::Esc => {
                     let new_action = self.handle_esc(state);
-                    self.menu_index = 0; // reset when esc is pressed
+                    self.menu_index = 0; // reset when pressed
                     return Ok(new_action);
                 }
                 KeyCode::Enter => {
                     let new_action = self.handle_enter();
-                    self.menu_index = 0; // reset when enter is pressed
+                    self.menu_index = 0; // reset when pressed
                     return Ok(new_action);
                 }
                 KeyCode::Up => {
