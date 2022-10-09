@@ -1,91 +1,53 @@
-use super::{AppEvent, Screen, ScreenFrame};
-use crate::application::AppState;
-use crate::router::Action;
-use crate::widgets::constants::white;
-use crate::{models::NodeManager, widgets::constants::highlight};
-use anyhow::Result;
-use async_trait::async_trait;
-use crossterm::event::KeyCode;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tui::widgets::{Block, Borders, List, ListItem, ListState};
+use tui::{
+    layout::{Constraint, Direction, Layout, Rect},
+    text::Text,
+    widgets::{Block, Borders, Paragraph, Wrap},
+};
 
-pub struct NodeScreen {
-    node_manager: Arc<Mutex<NodeManager>>,
-    state: ListState,
+use crate::widgets::{constants::white, draw::draw_selectable_list};
+
+use super::ScreenFrame;
+
+pub const NODE_MENU: [&str; 5] = [
+    "Connect",
+    "List Channels",
+    "Invoice",
+    "Pay",
+    "New On Chain Address",
+];
+
+pub fn draw_node(
+    frame: &mut ScreenFrame,
+    chunk: Rect,
     pubkey: String,
-    node_id: String,
-}
+    highlight_state: (bool, bool),
+    menu_index: Option<usize>,
+) {
+    let horizontal_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)].as_ref())
+        .split(chunk);
+    let text = Text::from(format!("Node Pubkey: {}", pubkey.clone()));
 
-impl NodeScreen {
-    pub fn new(node_manager: Arc<Mutex<NodeManager>>, pubkey: String, node_id: String) -> Self {
-        let mut state = ListState::default();
-        state.select(Some(0));
+    let block = Paragraph::new(text)
+        .style(white())
+        .block(Block::default())
+        .wrap(Wrap { trim: false })
+        .block(
+            Block::default()
+                .title("Node View")
+                .borders(Borders::ALL)
+                .border_style(white()),
+        );
 
-        Self {
-            node_manager,
-            state,
-            pubkey,
-            node_id,
-        }
-    }
-}
+    frame.render_widget(block, horizontal_chunks[0]);
 
-#[async_trait]
-impl Screen for NodeScreen {
-    async fn paint(&self, frame: &mut ScreenFrame, app: &AppState) {
-        let items = vec![ListItem::new("[Back]")];
-        let list = List::new(items)
-            .block(
-                Block::default()
-                    .title(self.pubkey.clone())
-                    .borders(Borders::ALL),
-            )
-            .style(white())
-            .highlight_style(highlight())
-            .highlight_symbol(">>");
-        let size = frame.size();
-
-        // frame.render_stateful_widget(list, size, &mut self.state);
-    }
-
-    async fn handle_input(
-        &mut self,
-        event: AppEvent,
-        app: &mut AppState,
-    ) -> Result<Option<Action>> {
-        if let AppEvent::Input(event) = event {
-            let selected = self.state.selected().unwrap_or(0);
-            let list_items = 1;
-
-            match event.code {
-                KeyCode::Enter => {
-                    self.node_manager
-                        .clone()
-                        .lock()
-                        .await
-                        .connect_peer(self.node_id.clone(), String::from("")) // TODO peer connection string
-                        .await
-                        .expect("cannot connect"); // TODO delete
-                }
-                KeyCode::Up => {
-                    if selected == 0 {
-                        self.state.select(Some(list_items - 1));
-                    } else {
-                        self.state.select(Some(selected - 1));
-                    }
-                }
-                KeyCode::Down => {
-                    if selected == list_items - 1 {
-                        self.state.select(Some(0));
-                    } else {
-                        self.state.select(Some(selected + 1));
-                    }
-                }
-                _ => (),
-            };
-        }
-
-        Ok(None)
-    }
+    draw_selectable_list(
+        frame,
+        horizontal_chunks[1],
+        "Node Actions",
+        &NODE_MENU,
+        highlight_state,
+        menu_index,
+    )
 }

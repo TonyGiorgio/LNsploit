@@ -4,7 +4,7 @@ use crate::screens::{AppEvent, ParentScreen, Screen};
 use crate::FilesystemLogger;
 use anyhow::{anyhow, Result};
 use bitcoincore_rpc::Client;
-use crossterm::event::{KeyModifiers, ModifierKeyCode};
+use crossterm::event::{KeyEvent, KeyModifiers, ModifierKeyCode};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event as CEvent, KeyCode},
     execute,
@@ -73,17 +73,21 @@ impl Application {
         let mut screen = ParentScreen::new();
 
         loop {
-            let current_route = state.router.get_current_route();
-
             logger.log(&Record::new(
                 lightning::util::logger::Level::Debug,
-                format_args!("starting current route: {:?}", current_route),
+                format_args!(
+                    "current route: {:?}, current active: {:?}, current stack: {:?}",
+                    state.router.get_current_route(),
+                    state.router.get_active_block(),
+                    state.router.get_stack()
+                ),
                 "application",
                 "",
                 0,
             ));
 
             self.term.draw(|f| {
+                /*
                 logger.log(&Record::new(
                     lightning::util::logger::Level::Debug,
                     format_args!("about to paint scrren"),
@@ -91,8 +95,10 @@ impl Application {
                     "",
                     0,
                 ));
+                */
                 let paint_future = screen.paint(f, &state);
                 block_on(paint_future);
+                /*
                 logger.log(&Record::new(
                     lightning::util::logger::Level::Debug,
                     format_args!("got passed paint screen future"),
@@ -100,6 +106,7 @@ impl Application {
                     "",
                     0,
                 ));
+                */
             })?;
 
             let screen_event = match inputs.recv() {
@@ -116,6 +123,7 @@ impl Application {
                         break;
                     }
                     AppEvent::Back => {
+                        // let the screens attempt to handle this
                         logger.log(&Record::new(
                             lightning::util::logger::Level::Debug,
                             format_args!("handling back event"),
@@ -123,7 +131,26 @@ impl Application {
                             "",
                             0,
                         ));
-                        Some(Action::Pop)
+
+                        let screen_event = screen
+                            .handle_input(
+                                AppEvent::Input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+                                &mut state,
+                            )
+                            .await?;
+                        match screen_event {
+                            Some(event) => {
+                                logger.log(&Record::new(
+                                    lightning::util::logger::Level::Debug,
+                                    format_args!("got an event back from screen: {:?}", event),
+                                    "application",
+                                    "",
+                                    0,
+                                ));
+                                Some(event)
+                            }
+                            None => None, // TODO consider letting this override screen
+                        }
                     }
                     event => {
                         logger.log(&Record::new(
@@ -161,16 +188,6 @@ impl Application {
                 ));
                 state.router.go_to(event);
             }
-            logger.log(&Record::new(
-                lightning::util::logger::Level::Debug,
-                format_args!(
-                    "ending current route: {:?}",
-                    state.router.get_current_route()
-                ),
-                "application",
-                "",
-                0,
-            ));
         }
 
         self.close()
