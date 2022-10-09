@@ -80,10 +80,22 @@ impl ParentScreen {
     }
 
     fn handle_esc(&mut self, state: &mut AppState) -> Option<Action> {
-        // if the current active block is menu then do nothing
-        match state.router.get_active_block() {
-            ActiveBlock::Menu => return None,
-            _ => (),
+        // if the current active block and stack is menu then do nothing
+        if matches!(state.router.get_active_block(), ActiveBlock::Menu)
+            && matches!(state.router.get_current_route(), Location::Home)
+        {
+            return None;
+        };
+        // if the current active block is menu/nodes but active stack is something
+        // else then replace back to the active stack
+        if matches!(state.router.get_active_block(), ActiveBlock::Menu)
+            || matches!(state.router.get_active_block(), ActiveBlock::Nodes)
+        {
+            if !matches!(state.router.get_current_route(), Location::Home)
+                && !matches!(state.router.get_current_route(), Location::NodesList)
+            {
+                return Some(Action::Replace(state.router.get_current_route().clone()));
+            }
         };
 
         // reset menu list
@@ -93,8 +105,6 @@ impl ParentScreen {
             .collect::<Vec<String>>();
 
         // pop the current main screen
-        // TODO consider leaving the current screen
-        // but switching active block to menu instead
         Some(Action::Pop)
     }
 
@@ -113,6 +123,22 @@ impl ParentScreen {
             .collect::<Vec<String>>();
 
         Some(Action::Replace(Location::NodesList))
+    }
+
+    fn handle_enter_main_menu(&mut self, state: &mut AppState) -> Option<Action> {
+        // if the current active block is node list then do nothing
+        match state.router.get_active_block() {
+            ActiveBlock::Menu => return None,
+            _ => (),
+        };
+
+        // set menu list to menu items
+        self.current_menu_list = MAIN_MENU
+            .iter()
+            .map(|x| String::from(*x))
+            .collect::<Vec<String>>();
+
+        Some(Action::Replace(Location::Home))
     }
 }
 
@@ -228,7 +254,7 @@ impl Screen for ParentScreen {
         };
 
         let footer_block = Paragraph::new(Text::from(
-            "q: Quit, esc: Back, L: Nodes Menu, N: Create new node",
+            "q: Quit, esc: Back, M: Main Menu, L: Nodes Menu, N: Create new node",
         ))
         .block(
             Block::default()
@@ -258,6 +284,11 @@ impl Screen for ParentScreen {
                             .collect::<Vec<String>>()
                     };
                     state.cached_nodes_list = Arc::new(nodes_list);
+                }
+                KeyCode::Char('M') => {
+                    let new_action = self.handle_enter_main_menu(state);
+                    self.menu_index = 0; // reset when pressed
+                    return Ok(new_action);
                 }
                 KeyCode::Char('L') => {
                     let new_action = self.handle_enter_node_list(state);

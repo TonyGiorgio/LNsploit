@@ -53,7 +53,14 @@ impl Router {
                 (location.clone(), location_to_active_block(location.clone()))
             }
             Action::Replace(location) => {
-                (location.clone(), location_to_active_block(location.clone()))
+                // if menu item, don't replace route, just the active block
+                let next_route = match location {
+                    Location::Home => self.screen_stack[self.screen_stack.len() - 1].clone(),
+                    Location::NodesList => self.screen_stack[self.screen_stack.len() - 1].clone(),
+                    _ => location.clone(),
+                };
+
+                (next_route, location_to_active_block(location.clone()))
             }
             Action::Pop => {
                 let next_location = match self.screen_stack.pop() {
