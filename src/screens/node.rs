@@ -6,7 +6,10 @@ use tui::{
 
 use crate::{
     router::NodeSubLocation,
-    widgets::{constants::white, draw::draw_selectable_list},
+    widgets::{
+        constants::{green, white, yellow},
+        draw::draw_selectable_list,
+    },
 };
 
 use super::ScreenFrame;
@@ -56,13 +59,25 @@ pub fn draw_node(
                 menu_index,
             );
         }
-        NodeSubLocation::ConnectPeer => draw_connect_peer(frame, vertical_chunks[1]),
+        NodeSubLocation::ConnectPeer => {
+            draw_connect_peer(frame, vertical_chunks[1], highlight_state)
+        }
         NodeSubLocation::ListChannels => todo!(),
         NodeSubLocation::NewAddress => todo!(),
     }
 }
 
-fn draw_connect_peer(frame: &mut ScreenFrame, chunk: Rect) {
+fn draw_connect_peer(frame: &mut ScreenFrame, chunk: Rect, highlight_state: (bool, bool)) {
+    let border_color_style = {
+        if highlight_state.0 {
+            yellow()
+        } else if highlight_state.1 {
+            green()
+        } else {
+            white()
+        }
+    };
+
     let text = Text::from(format!("Connect Peer"));
     let block = Paragraph::new(text)
         .style(white())
@@ -70,9 +85,9 @@ fn draw_connect_peer(frame: &mut ScreenFrame, chunk: Rect) {
         .wrap(Wrap { trim: false })
         .block(
             Block::default()
-                .title("Node View")
+                .title("Connect Peer")
                 .borders(Borders::ALL)
-                .border_style(white()),
+                .border_style(border_color_style),
         );
     frame.render_widget(block, chunk);
 }
