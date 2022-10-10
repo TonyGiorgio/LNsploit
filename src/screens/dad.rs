@@ -1,19 +1,20 @@
 use std::sync::Arc;
 
 use super::{
-    draw_node, draw_simulation, draw_welcome, AppEvent, Screen, ScreenFrame, NODE_MENU,
+    draw_node, draw_simulation, draw_welcome, AppEvent, Screen, ScreenFrame, NODE_ACTION_MENU,
     SIMULATION_MENU,
 };
 use crate::{
     application::AppState,
     handlers::{on_down_press_handler, on_up_press_handler},
-    router::{Action, ActiveBlock, Location},
+    router::{Action, ActiveBlock, Location, NodeSubLocation},
     widgets::draw::draw_selectable_list,
 };
 use anyhow::Result;
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
 
+use lightning::util::logger::{Logger, Record};
 use tui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Style},
@@ -68,13 +69,27 @@ impl ParentScreen {
     fn handle_enter_node(&mut self) -> Option<Action> {
         let item = self.current_menu_list[self.menu_index].clone();
 
-        let action = Action::Push(Location::Node(item));
-        let new_items = NODE_MENU
+        let action = Action::Push(Location::Node(item, NodeSubLocation::ActionMenu));
+        let new_items = NODE_ACTION_MENU
             .iter()
             .map(|x| String::from(*x))
             .collect::<Vec<String>>();
 
         self.current_menu_list = new_items;
+
+        Some(action)
+    }
+
+    fn handle_enter_node_action(&self, pubkey: &str) -> Option<Action> {
+        // let active_node =
+        let item = self.current_menu_list[self.menu_index].clone();
+
+        let action = match String::as_str(&item) {
+            "Connect Peer" => {
+                Action::Push(Location::Node(pubkey.into(), NodeSubLocation::ConnectPeer))
+            }
+            _ => return None,
+        };
 
         Some(action)
     }
@@ -99,10 +114,19 @@ impl ParentScreen {
         };
 
         // reset menu list
-        self.current_menu_list = MAIN_MENU
-            .iter()
-            .map(|x| String::from(*x))
-            .collect::<Vec<String>>();
+        // TODO: wish we had a slicker way of handling sub-menus
+        self.current_menu_list = match state.router.get_current_route() {
+            Location::Node(_, _) => NODE_ACTION_MENU
+                .iter()
+                .map(|x| String::from(*x))
+                .collect::<Vec<String>>(),
+            _ => MAIN_MENU
+                .iter()
+                .map(|x| String::from(*x))
+                .collect::<Vec<String>>(),
+        };
+
+        self.menu_index = 0;
 
         // pop the current main screen
         Some(Action::Pop)
@@ -229,18 +253,18 @@ impl Screen for ParentScreen {
                 };
                 draw_simulation(frame, horizontal_chunks[1], (false, is_active), menu_option)
             }
-            Location::Node(n) => {
-                let (is_active, menu_option) = {
+            Location::Node(n, s) => {
+                let (is_active, menu_option, node_sub_location) = {
                     let active_matches = matches!(
                         state.router.get_active_block(),
-                        ActiveBlock::Main(Location::Node(_))
+                        ActiveBlock::Main(Location::Node(_, _))
                     );
                     let menu_option = if active_matches {
                         Some(self.menu_index)
                     } else {
                         None
                     };
-                    (active_matches, menu_option)
+                    (active_matches, menu_option, s)
                 };
                 draw_node(
                     frame,
@@ -248,6 +272,7 @@ impl Screen for ParentScreen {
                     n.clone(),
                     (false, is_active),
                     menu_option,
+                    node_sub_location,
                 )
             }
             _ => draw_welcome(frame, horizontal_chunks[1]),
@@ -306,6 +331,32 @@ impl Screen for ParentScreen {
                     let new_action = match current_route {
                         ActiveBlock::Menu => self.handle_enter_main(),
                         ActiveBlock::Nodes => self.handle_enter_node(),
+                        ActiveBlock::Main(location) => match location {
+                            Location::Home => {
+                                panic!("Shouldn't be possible");
+                            }
+                            Location::NodesList => {
+                                panic!("Shouldn't be possible");
+                            }
+                            Location::Node(pubkey, sub_location) => {
+                                let action = self.handle_enter_node_action(pubkey);
+                                state.logger.clone().log(&Record::new(
+                                    lightning::util::logger::Level::Debug,
+                                    format_args!(
+                                        "action: {:?}, current sublocation: {:?}",
+                                        action.clone(),
+                                        sub_location.clone()
+                                    ),
+                                    "dad",
+                                    "",
+                                    334,
+                                ));
+                                action
+                            }
+                            Location::Simulation => {
+                                panic!("Shouldn't be possible");
+                            }
+                        },
                         _ => None,
                     };
                     self.menu_index = 0; // reset when pressed

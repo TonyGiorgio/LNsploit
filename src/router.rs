@@ -2,8 +2,16 @@
 pub enum Location {
     Home,
     NodesList,
-    Node(String),
+    Node(String, NodeSubLocation),
     Simulation,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum NodeSubLocation {
+    ActionMenu,
+    ConnectPeer,
+    ListChannels,
+    NewAddress,
 }
 
 #[derive(Debug, Clone)]
@@ -104,7 +112,7 @@ impl Router {
 
 pub fn location_to_active_block(loc: Location) -> ActiveBlock {
     match loc {
-        Location::Node(n) => ActiveBlock::Main(Location::Node(n)),
+        Location::Node(n, s) => ActiveBlock::Main(Location::Node(n, s)),
         Location::Simulation => ActiveBlock::Main(Location::Simulation),
         Location::Home => ActiveBlock::Menu,
         Location::NodesList => ActiveBlock::Nodes,
