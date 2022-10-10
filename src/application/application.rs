@@ -24,10 +24,14 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tui::{backend::CrosstermBackend, Terminal};
 
+// Toggle the noisiest logs
+const VERBOSE: bool = false;
+
 pub struct AppState {
     pub node_manager: Arc<Mutex<NodeManager>>,
     pub router: Router,
     pub cached_nodes_list: Arc<Vec<String>>,
+    pub logger: Arc<FilesystemLogger>,
 }
 
 pub struct Application {
@@ -68,45 +72,49 @@ impl Application {
             node_manager,
             router: Router::new(),
             cached_nodes_list: Arc::new(nodes_list),
+            logger: logger.clone(),
         };
 
         let mut screen = ParentScreen::new();
 
         loop {
-            logger.log(&Record::new(
-                lightning::util::logger::Level::Debug,
-                format_args!(
-                    "current route: {:?}, current active: {:?}, current stack: {:?}",
-                    state.router.get_current_route(),
-                    state.router.get_active_block(),
-                    state.router.get_stack()
-                ),
-                "application",
-                "",
-                0,
-            ));
+            if VERBOSE {
+                logger.log(&Record::new(
+                    lightning::util::logger::Level::Debug,
+                    format_args!(
+                        "current route: {:?}, current active: {:?}, current stack: {:?}",
+                        state.router.get_current_route(),
+                        state.router.get_active_block(),
+                        state.router.get_stack()
+                    ),
+                    "application",
+                    "",
+                    0,
+                ));
+            }
 
             self.term.draw(|f| {
-                /*
-                logger.log(&Record::new(
-                    lightning::util::logger::Level::Debug,
-                    format_args!("about to paint scrren"),
-                    "application",
-                    "",
-                    0,
-                ));
-                */
+                if VERBOSE {
+                    logger.log(&Record::new(
+                        lightning::util::logger::Level::Debug,
+                        format_args!("about to paint scrren"),
+                        "application",
+                        "",
+                        0,
+                    ));
+                }
+
                 let paint_future = screen.paint(f, &state);
                 block_on(paint_future);
-                /*
-                logger.log(&Record::new(
-                    lightning::util::logger::Level::Debug,
-                    format_args!("got passed paint screen future"),
-                    "application",
-                    "",
-                    0,
-                ));
-                */
+                if VERBOSE {
+                    logger.log(&Record::new(
+                        lightning::util::logger::Level::Debug,
+                        format_args!("got passed paint screen future"),
+                        "application",
+                        "",
+                        0,
+                    ));
+                }
             })?;
 
             let screen_event = match inputs.recv() {
@@ -153,16 +161,19 @@ impl Application {
                         }
                     }
                     event => {
-                        logger.log(&Record::new(
-                            lightning::util::logger::Level::Debug,
-                            format_args!(
-                                "passing event ({:?}) to screen: {:?}",
-                                event, screen.menu_index
-                            ),
-                            "application",
-                            "",
-                            0,
-                        ));
+                        if VERBOSE {
+                            logger.log(&Record::new(
+                                lightning::util::logger::Level::Debug,
+                                format_args!(
+                                    "passing event ({:?}) to screen: {:?}",
+                                    event, screen.menu_index
+                                ),
+                                "application",
+                                "",
+                                0,
+                            ));
+                        }
+
                         screen.handle_input(event, &mut state).await?
                     }
                 },
