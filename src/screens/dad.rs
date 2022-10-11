@@ -95,6 +95,51 @@ impl ParentScreen {
         Some(action)
     }
 
+    async fn handle_connect_peer_action(
+        &self,
+        pubkey: &str,
+        state: &mut AppState,
+    ) -> Option<Action> {
+        let node_id = state
+            .node_manager
+            .lock()
+            .await
+            .get_node_id_by_pubkey(pubkey)
+            .await
+            .expect("Pubkey should have corresponding node_id");
+
+        if let Some(peer_connection_string) = state.paste_contents.clone() {
+            match state
+                .node_manager
+                .lock()
+                .await
+                .connect_peer(node_id, peer_connection_string.to_string())
+                .await
+            {
+                Ok(_) => {
+                    state.logger.clone().log(&Record::new(
+                        lightning::util::logger::Level::Debug,
+                        format_args!("connected to peer I guess!"),
+                        "dad",
+                        "",
+                        334,
+                    ));
+                }
+                Err(e) => {
+                    state.logger.clone().log(&Record::new(
+                        lightning::util::logger::Level::Debug,
+                        format_args!("{}", e),
+                        "dad",
+                        "",
+                        334,
+                    ));
+                }
+            }
+        }
+
+        None
+    }
+
     fn handle_esc(&mut self, state: &mut AppState) -> Option<Action> {
         // if the current active block and stack is menu then do nothing
         if matches!(state.router.get_active_block(), ActiveBlock::Menu)
@@ -274,6 +319,7 @@ impl Screen for ParentScreen {
                     (false, is_active),
                     menu_option,
                     node_sub_location,
+                    state,
                 )
             }
             _ => draw_welcome(frame, horizontal_chunks[1]),
@@ -339,21 +385,30 @@ impl Screen for ParentScreen {
                             Location::NodesList => {
                                 panic!("Shouldn't be possible");
                             }
-                            Location::Node(pubkey, sub_location) => {
-                                let action = self.handle_enter_node_action(&pubkey, state);
-                                state.logger.clone().log(&Record::new(
-                                    lightning::util::logger::Level::Debug,
-                                    format_args!(
-                                        "action: {:?}, current sublocation: {:?}",
-                                        action.clone(),
-                                        sub_location.clone()
-                                    ),
-                                    "dad",
-                                    "",
-                                    334,
-                                ));
-                                action
-                            }
+                            Location::Node(pubkey, sub_location) => match sub_location {
+                                NodeSubLocation::ActionMenu => {
+                                    let action = self.handle_enter_node_action(&pubkey, state);
+                                    state.logger.clone().log(&Record::new(
+                                        lightning::util::logger::Level::Debug,
+                                        format_args!(
+                                            "action: {:?}, current sublocation: {:?}",
+                                            action.clone(),
+                                            sub_location.clone()
+                                        ),
+                                        "dad",
+                                        "",
+                                        334,
+                                    ));
+                                    action
+                                }
+                                NodeSubLocation::ConnectPeer => {
+                                    let action =
+                                        self.handle_connect_peer_action(&pubkey, state).await;
+                                    action
+                                }
+                                NodeSubLocation::ListChannels => None,
+                                NodeSubLocation::NewAddress => None,
+                            },
                             Location::Simulation => {
                                 panic!("Shouldn't be possible");
                             }

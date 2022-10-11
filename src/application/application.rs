@@ -1,6 +1,7 @@
 use crate::models::{node, NodeManager};
 use crate::router::{Action, Location, Router};
 use crate::screens::{AppEvent, InputMode, ParentScreen, Screen};
+use crate::utility::clipboard::{get_clipboard_provider, ClipboardProvider, ClipboardType};
 use crate::FilesystemLogger;
 use anyhow::{anyhow, Result};
 use bitcoincore_rpc::Client;
@@ -33,6 +34,7 @@ pub struct AppState {
     pub cached_nodes_list: Arc<Vec<String>>,
     pub logger: Arc<FilesystemLogger>,
     pub input_mode: InputMode,
+    pub paste_contents: Option<Arc<String>>, // pub clipboard_provider: Arc<Box<dyn ClipboardProvider>>,
 }
 
 pub struct Application {
@@ -75,6 +77,7 @@ impl Application {
             cached_nodes_list: Arc::new(nodes_list),
             logger: logger.clone(),
             input_mode: InputMode::Normal,
+            paste_contents: None, // clipboard_provider: Arc::new(get_clipboard_provider()),
         };
 
         let mut screen = ParentScreen::new();
@@ -125,7 +128,7 @@ impl Application {
                         // do not allow in editing mode, pass q normally
                         if matches!(state.input_mode, InputMode::Editing) {
                             state.input_mode = InputMode::Normal;
-                            let screen_event = screen
+                            screen
                                 .handle_input(
                                     AppEvent::Input(KeyEvent::new(
                                         KeyCode::Char('q'),
@@ -134,6 +137,8 @@ impl Application {
                                     &mut state,
                                 )
                                 .await?;
+                        } else {
+                            break;
                         }
 
                         logger.log(&Record::new(
@@ -167,6 +172,10 @@ impl Application {
                                 &mut state,
                             )
                             .await?;
+
+                        // let's clear the clipboard state as well otherwise it's dumb
+                        state.paste_contents = None;
+
                         match screen_event {
                             Some(event) => {
                                 logger.log(&Record::new(
@@ -180,6 +189,23 @@ impl Application {
                             }
                             None => None, // TODO consider letting this override screen
                         }
+                    }
+                    AppEvent::Paste => {
+                        let clipboard = get_clipboard_provider();
+                        let paste = clipboard.get_contents(ClipboardType::Clipboard);
+                        logger.log(&Record::new(
+                            lightning::util::logger::Level::Debug,
+                            format_args!("paste result: {:?}", paste),
+                            "application",
+                            "",
+                            0,
+                        ));
+
+                        if let Ok(paste) = paste {
+                            state.paste_contents = Some(Arc::new(paste.trim().into()));
+                        }
+
+                        None
                     }
                     event => {
                         if VERBOSE {
@@ -239,15 +265,17 @@ impl Application {
                 if event::poll(timeout).expect("poll works") {
                     if let CEvent::Key(key) = event::read().expect("can read events") {
                         let (app_event, exit) = match (key.code, key.modifiers) {
-                            (KeyCode::Char('c'), KeyModifiers::CONTROL) => break,
-                            (KeyCode::Char('q'), _) => (AppEvent::Quit, true),
                             (KeyCode::Esc, _) => (AppEvent::Back, false),
+                            (KeyCode::Char('q'), _) => (AppEvent::Quit, false),
+                            (KeyCode::Char('c'), KeyModifiers::CONTROL) => (AppEvent::Copy, false),
+                            (KeyCode::Char('v'), KeyModifiers::CONTROL) => (AppEvent::Paste, false),
                             _ => (AppEvent::Input(key), false),
                         };
                         tx.send(app_event).expect("can send events");
-                        if exit {
-                            return;
-                        }
+                        // TODO: we have to pass the quit event, so we don't get to clean up this thread here anymore
+                        // if exit {
+                        //     return;
+                        // }
                     }
                 }
 
