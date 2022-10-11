@@ -4,6 +4,7 @@ pub enum Location {
     NodesList,
     Node(String, NodeSubLocation),
     Simulation,
+    Exploits,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -116,6 +117,7 @@ pub fn location_to_active_block(loc: Location) -> ActiveBlock {
         Location::Simulation => ActiveBlock::Main(Location::Simulation),
         Location::Home => ActiveBlock::Menu,
         Location::NodesList => ActiveBlock::Nodes,
+        Location::Exploits => ActiveBlock::Main(Location::Exploits),
         _ => ActiveBlock::NoneBlock,
     }
 }

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use super::{
-    draw_node, draw_simulation, draw_welcome, AppEvent, InputMode, Screen, ScreenFrame,
-    NODE_ACTION_MENU, SIMULATION_MENU,
+    draw_exploits, draw_node, draw_simulation, draw_welcome, AppEvent, InputMode, Screen,
+    ScreenFrame, EXPLOIT_ACTION_MENU, NODE_ACTION_MENU, SIMULATION_MENU,
 };
 use crate::{
     application::AppState,
@@ -54,6 +54,13 @@ impl ParentScreen {
             "Simulation Mode" => (
                 Action::Push(Location::Simulation),
                 SIMULATION_MENU
+                    .iter()
+                    .map(|x| String::from(*x))
+                    .collect::<Vec<String>>(),
+            ),
+            "Exploits" => (
+                Action::Push(Location::Exploits),
+                EXPLOIT_ACTION_MENU
                     .iter()
                     .map(|x| String::from(*x))
                     .collect::<Vec<String>>(),
@@ -166,6 +173,10 @@ impl ParentScreen {
                 .iter()
                 .map(|x| String::from(*x))
                 .collect::<Vec<String>>(),
+            Location::Exploits => EXPLOIT_ACTION_MENU
+                .iter()
+                .map(|x| String::from(*x))
+                .collect::<Vec<String>>(),
             _ => MAIN_MENU
                 .iter()
                 .map(|x| String::from(*x))
@@ -217,7 +228,6 @@ impl Screen for ParentScreen {
     async fn paint(&self, frame: &mut ScreenFrame, state: &AppState) {
         let parent_chunks = Layout::default()
             .direction(Direction::Vertical)
-            // TODO why won't Length work here?
             .constraints([Constraint::Percentage(90), Constraint::Percentage(10)].as_ref())
             .split(frame.size());
 
@@ -299,6 +309,21 @@ impl Screen for ParentScreen {
                 };
                 draw_simulation(frame, horizontal_chunks[1], (false, is_active), menu_option)
             }
+            Location::Exploits => {
+                let (is_active, menu_option) = {
+                    let active_matches = matches!(
+                        state.router.get_active_block(),
+                        ActiveBlock::Main(Location::Exploits)
+                    );
+                    let menu_option = if active_matches {
+                        Some(self.menu_index)
+                    } else {
+                        None
+                    };
+                    (active_matches, menu_option)
+                };
+                draw_exploits(frame, horizontal_chunks[1], (false, is_active), menu_option)
+            }
             Location::Node(n, s) => {
                 let (is_active, menu_option, node_sub_location) = {
                     let active_matches = matches!(
@@ -379,12 +404,9 @@ impl Screen for ParentScreen {
                         ActiveBlock::Menu => self.handle_enter_main(),
                         ActiveBlock::Nodes => self.handle_enter_node(),
                         ActiveBlock::Main(location) => match location {
-                            Location::Home => {
-                                panic!("Shouldn't be possible");
-                            }
-                            Location::NodesList => {
-                                panic!("Shouldn't be possible");
-                            }
+                            Location::Home => None,
+                            Location::NodesList => None,
+                            Location::Exploits => None,
                             Location::Node(pubkey, sub_location) => match sub_location {
                                 NodeSubLocation::ActionMenu => {
                                     let action = self.handle_enter_node_action(&pubkey, state);
@@ -409,9 +431,7 @@ impl Screen for ParentScreen {
                                 NodeSubLocation::ListChannels => None,
                                 NodeSubLocation::NewAddress => None,
                             },
-                            Location::Simulation => {
-                                panic!("Shouldn't be possible");
-                            }
+                            Location::Simulation => None,
                         },
                         _ => None,
                     };

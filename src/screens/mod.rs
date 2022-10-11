@@ -1,10 +1,12 @@
 mod dad;
+mod exploit;
 mod node;
 mod screen;
 mod simulation;
 mod welcome;
 
 pub use dad::*;
+pub use exploit::*;
 pub use node::*;
 pub use screen::*;
 pub use simulation::*;
