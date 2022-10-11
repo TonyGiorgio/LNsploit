@@ -286,7 +286,7 @@ pub fn broadcast_lnd_15_exploit(
     let control_block = spend_info
         .control_block(&(script.clone(), LeafVersion::TapScript))
         .unwrap();
-    // witness is control block followed by spending script
+    // witness is spending script followed by control block
     let witness = vec![script.serialize(), control_block.serialize()];
 
     let txin = TxIn {
