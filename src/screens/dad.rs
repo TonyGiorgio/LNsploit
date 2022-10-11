@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use super::{
-    draw_node, draw_simulation, draw_welcome, AppEvent, Screen, ScreenFrame, NODE_ACTION_MENU,
-    SIMULATION_MENU,
+    draw_node, draw_simulation, draw_welcome, AppEvent, InputMode, Screen, ScreenFrame,
+    NODE_ACTION_MENU, SIMULATION_MENU,
 };
 use crate::{
     application::AppState,
@@ -80,12 +80,13 @@ impl ParentScreen {
         Some(action)
     }
 
-    fn handle_enter_node_action(&self, pubkey: &str) -> Option<Action> {
-        // let active_node =
+    fn handle_enter_node_action(&self, pubkey: &str, state: &mut AppState) -> Option<Action> {
         let item = self.current_menu_list[self.menu_index].clone();
 
         let action = match String::as_str(&item) {
             "Connect Peer" => {
+                // the next screen for connect peer will allow input
+                state.input_mode = InputMode::Editing;
                 Action::Push(Location::Node(pubkey.into(), NodeSubLocation::ConnectPeer))
             }
             _ => return None,
@@ -327,7 +328,7 @@ impl Screen for ParentScreen {
                 }
                 KeyCode::Enter => {
                     // check if enter is on main screen or node screen
-                    let current_route = state.router.get_active_block();
+                    let current_route = { state.router.get_active_block().clone() };
                     let new_action = match current_route {
                         ActiveBlock::Menu => self.handle_enter_main(),
                         ActiveBlock::Nodes => self.handle_enter_node(),
@@ -339,7 +340,7 @@ impl Screen for ParentScreen {
                                 panic!("Shouldn't be possible");
                             }
                             Location::Node(pubkey, sub_location) => {
-                                let action = self.handle_enter_node_action(pubkey);
+                                let action = self.handle_enter_node_action(&pubkey, state);
                                 state.logger.clone().log(&Record::new(
                                     lightning::util::logger::Level::Debug,
                                     format_args!(

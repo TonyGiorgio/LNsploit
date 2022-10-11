@@ -17,6 +17,12 @@ pub use welcome::*;
 use crossterm::event::KeyEvent;
 
 #[derive(Debug)]
+pub enum InputMode {
+    Normal,
+    Editing,
+}
+
+#[derive(Debug)]
 pub enum AppEvent {
     Tick,
     Input(KeyEvent),
