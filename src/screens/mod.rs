@@ -1,13 +1,11 @@
 mod dad;
 mod node;
-mod nodes_list;
 mod screen;
 mod simulation;
 mod welcome;
 
 pub use dad::*;
 pub use node::*;
-pub use nodes_list::*;
 pub use screen::*;
 pub use simulation::*;
 pub use welcome::*;

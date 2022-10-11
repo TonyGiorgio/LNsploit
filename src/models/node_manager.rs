@@ -59,10 +59,21 @@ impl NodeManager {
         node_manager
     }
 
-    pub async fn list_nodes(&mut self) -> Vec<Node> {
+    pub async fn list_nodes(&self) -> Vec<Node> {
         let conn = &mut self.db.get().unwrap();
         let node_list = nodes.load::<Node>(conn).expect("Error loading nodes"); // TODO do not panic
         node_list
+    }
+
+    pub async fn get_node_id_by_pubkey(&self, passed_pubkey: &str) -> Option<String> {
+        for node_item in self.list_nodes().await {
+            if node_item.pubkey == passed_pubkey {
+                let db_id = node_item.id.clone();
+                return Some(db_id);
+            }
+        }
+
+        return None;
     }
 
     pub async fn connect_peer(
