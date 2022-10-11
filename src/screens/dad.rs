@@ -147,6 +147,38 @@ impl ParentScreen {
         None
     }
 
+    async fn handle_enter_exploit_action(&self, state: &mut AppState) -> Option<Action> {
+        let action = match self.menu_index {
+            0 => {
+                // Broadcast LND tx
+                match state.node_manager.lock().await.broadcast_lnd_15_exploit() {
+                    Ok(_) => {
+                        state.logger.clone().log(&Record::new(
+                            lightning::util::logger::Level::Debug,
+                            format_args!("broadcasted tx!"),
+                            "dad",
+                            "",
+                            334,
+                        ));
+                    }
+                    Err(e) => {
+                        state.logger.clone().log(&Record::new(
+                            lightning::util::logger::Level::Debug,
+                            format_args!("failure to broadcast tx: {}", e),
+                            "dad",
+                            "",
+                            334,
+                        ));
+                    }
+                }
+                None
+            }
+            _ => return None,
+        };
+
+        action
+    }
+
     fn handle_esc(&mut self, state: &mut AppState) -> Option<Action> {
         // if the current active block and stack is menu then do nothing
         if matches!(state.router.get_active_block(), ActiveBlock::Menu)
@@ -170,10 +202,6 @@ impl ParentScreen {
         // TODO: wish we had a slicker way of handling sub-menus
         self.current_menu_list = match state.router.get_current_route() {
             Location::Node(_, _) => NODE_ACTION_MENU
-                .iter()
-                .map(|x| String::from(*x))
-                .collect::<Vec<String>>(),
-            Location::Exploits => EXPLOIT_ACTION_MENU
                 .iter()
                 .map(|x| String::from(*x))
                 .collect::<Vec<String>>(),
@@ -406,7 +434,7 @@ impl Screen for ParentScreen {
                         ActiveBlock::Main(location) => match location {
                             Location::Home => None,
                             Location::NodesList => None,
-                            Location::Exploits => None,
+                            Location::Exploits => self.handle_enter_exploit_action(state).await,
                             Location::Node(pubkey, sub_location) => match sub_location {
                                 NodeSubLocation::ActionMenu => {
                                     let action = self.handle_enter_node_action(&pubkey, state);

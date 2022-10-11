@@ -81,6 +81,8 @@ impl LdkBitcoindClient {
     }
 
     pub fn get_new_address(&self, label: String) -> Result<Address, Box<dyn std::error::Error>> {
+        // TODO utilize label, but for now not because polar...
+        let label = String::from("");
         match self
             .bitcoind_client
             .get_new_address(Some(String::as_str(&label.clone())), None)
@@ -91,6 +93,8 @@ impl LdkBitcoindClient {
     }
 
     pub fn create_wallet(&self, label: String) -> Result<(), Box<dyn std::error::Error>> {
+        // TODO utilize label, but for now not because polar...
+        let label = String::from("");
         match self.bitcoind_client.create_wallet(
             String::as_str(&label.clone()),
             None,
