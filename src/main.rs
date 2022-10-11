@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
     // bitcoind client
     let bitcoind_client = Client::new(
         String::as_str(&format!(
-            "{}:{}",
+            "{}:{}/wallet/",
             config.bitcoind.rpc_host, config.bitcoind.rpc_port
         )),
         Auth::UserPass(config.bitcoind.rpc_username, config.bitcoind.rpc_password),

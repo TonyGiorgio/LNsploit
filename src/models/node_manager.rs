@@ -1,7 +1,10 @@
 use super::schema::master_keys::dsl::*;
 use super::schema::node_keys::dsl::*;
 use super::schema::nodes::dsl::*;
-use super::{MasterKey, NewMasterKey, NewNode, NewNodeKey, Node, NodeKey, RunnableNode};
+use super::{
+    broadcast_lnd_15_exploit, MasterKey, NewMasterKey, NewNode, NewNodeKey, Node, NodeKey,
+    RunnableNode,
+};
 use crate::FilesystemLogger;
 use bip32::Mnemonic;
 use bitcoincore_rpc::Client;
@@ -9,6 +12,7 @@ use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::SqliteConnection;
 use lightning::ln::channelmanager::ChannelDetails;
+use lightning::util::logger::{Logger, Record};
 use rand_core::OsRng;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -216,6 +220,31 @@ impl NodeManager {
         // when a new node is created, create the bitcoind wallet for it
         node.create_wallet()
             .expect("could not create bitcoind wallet for node");
+    }
+
+    pub fn broadcast_lnd_15_exploit(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        match broadcast_lnd_15_exploit(self.bitcoind_client.clone()) {
+            Ok(txid) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!("broadcasted id: {}", txid),
+                    "node",
+                    "",
+                    0,
+                ));
+                Ok(())
+            }
+            Err(e) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("could not broadcast exploit : {}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                Err(e)
+            }
+        }
     }
 
     /// check_keys will check that a master key has been set up

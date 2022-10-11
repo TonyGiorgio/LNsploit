@@ -137,8 +137,6 @@ impl Application {
                                     &mut state,
                                 )
                                 .await?;
-                        } else {
-                            break;
                         }
 
                         logger.log(&Record::new(

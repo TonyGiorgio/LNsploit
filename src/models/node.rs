@@ -624,7 +624,7 @@ impl RunnableNode {
         let create_wallet_pubkey = self.pubkey.clone();
         let create_wallet_logger = self.logger.clone();
         tokio::spawn(async move {
-            match create_wallet_bitcoind.create_wallet(create_wallet_pubkey) {
+            match create_wallet_bitcoind.create_wallet(create_wallet_pubkey.clone()) {
                 Ok(_) => {
                     create_wallet_logger.log(&Record::new(
                         lightning::util::logger::Level::Info,
@@ -633,6 +633,27 @@ impl RunnableNode {
                         "",
                         0,
                     ));
+
+                    match create_wallet_bitcoind.get_new_address(create_wallet_pubkey.clone()) {
+                        Ok(addr) => {
+                            create_wallet_logger.log(&Record::new(
+                                lightning::util::logger::Level::Info,
+                                format_args!("SUCCESS: created lightning node address: {}", addr),
+                                "node",
+                                "",
+                                0,
+                            ));
+                        }
+                        Err(e) => {
+                            create_wallet_logger.log(&Record::new(
+                                lightning::util::logger::Level::Error,
+                                format_args!("ERROR: could not create node address: {}", e),
+                                "node",
+                                "",
+                                0,
+                            ));
+                        }
+                    }
                 }
                 Err(e) => {
                     create_wallet_logger.log(&Record::new(
