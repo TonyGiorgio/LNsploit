@@ -1,6 +1,6 @@
 use crate::models::{node, NodeManager};
 use crate::router::{Action, Location, Router};
-use crate::screens::{AppEvent, ParentScreen, Screen};
+use crate::screens::{AppEvent, InputMode, ParentScreen, Screen};
 use crate::FilesystemLogger;
 use anyhow::{anyhow, Result};
 use bitcoincore_rpc::Client;
@@ -32,6 +32,7 @@ pub struct AppState {
     pub router: Router,
     pub cached_nodes_list: Arc<Vec<String>>,
     pub logger: Arc<FilesystemLogger>,
+    pub input_mode: InputMode,
 }
 
 pub struct Application {
@@ -73,6 +74,7 @@ impl Application {
             router: Router::new(),
             cached_nodes_list: Arc::new(nodes_list),
             logger: logger.clone(),
+            input_mode: InputMode::Normal,
         };
 
         let mut screen = ParentScreen::new();
@@ -120,6 +122,20 @@ impl Application {
             let screen_event = match inputs.recv() {
                 Ok(event) => match event {
                     AppEvent::Quit => {
+                        // do not allow in editing mode, pass q normally
+                        if matches!(state.input_mode, InputMode::Editing) {
+                            state.input_mode = InputMode::Normal;
+                            let screen_event = screen
+                                .handle_input(
+                                    AppEvent::Input(KeyEvent::new(
+                                        KeyCode::Char('q'),
+                                        KeyModifiers::NONE,
+                                    )),
+                                    &mut state,
+                                )
+                                .await?;
+                        }
+
                         logger.log(&Record::new(
                             lightning::util::logger::Level::Debug,
                             format_args!("handling quit event"),
@@ -131,6 +147,11 @@ impl Application {
                         break;
                     }
                     AppEvent::Back => {
+                        // if input state is editing, move to normal
+                        if matches!(state.input_mode, InputMode::Editing) {
+                            state.input_mode = InputMode::Normal;
+                        }
+
                         // let the screens attempt to handle this
                         logger.log(&Record::new(
                             lightning::util::logger::Level::Debug,
