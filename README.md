@@ -1,6 +1,6 @@
 # LNsploit
 
-A Lightning Network exploit toolkit.
+A Lightning Network exploit toolkit built with LDK.
 
 ![main](./docs/images/lnsploit-main.png)
 ![exploits](./docs/images/lnsploit-exploits.png)
