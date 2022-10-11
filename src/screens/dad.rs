@@ -274,6 +274,7 @@ impl Screen for ParentScreen {
                     (false, is_active),
                     menu_option,
                     node_sub_location,
+                    state,
                 )
             }
             _ => draw_welcome(frame, horizontal_chunks[1]),

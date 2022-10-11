@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tui::{
     layout::{Constraint, Direction, Layout, Rect},
     text::Text,
@@ -5,6 +7,7 @@ use tui::{
 };
 
 use crate::{
+    application::AppState,
     router::NodeSubLocation,
     widgets::{
         constants::{green, white, yellow},
@@ -29,6 +32,7 @@ pub fn draw_node(
     highlight_state: (bool, bool),
     menu_index: Option<usize>,
     sub_location: &NodeSubLocation,
+    state: &AppState,
 ) {
     let vertical_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -60,14 +64,19 @@ pub fn draw_node(
             );
         }
         NodeSubLocation::ConnectPeer => {
-            draw_connect_peer(frame, vertical_chunks[1], highlight_state)
+            draw_connect_peer(frame, vertical_chunks[1], highlight_state, state)
         }
         NodeSubLocation::ListChannels => todo!(),
         NodeSubLocation::NewAddress => todo!(),
     }
 }
 
-fn draw_connect_peer(frame: &mut ScreenFrame, chunk: Rect, highlight_state: (bool, bool)) {
+fn draw_connect_peer(
+    frame: &mut ScreenFrame,
+    chunk: Rect,
+    highlight_state: (bool, bool),
+    state: &AppState,
+) {
     let border_color_style = {
         if highlight_state.0 {
             yellow()
@@ -78,7 +87,13 @@ fn draw_connect_peer(frame: &mut ScreenFrame, chunk: Rect, highlight_state: (boo
         }
     };
 
-    let text = Text::from(format!("Connect Peer"));
+    let paste = if let Some(paste) = state.paste_contents.clone() {
+        paste
+    } else {
+        Arc::new("".into())
+    };
+
+    let text = Text::from(format!("Connect Peer (paste it in):\n {}", paste));
     let block = Paragraph::new(text)
         .style(white())
         .block(Block::default())

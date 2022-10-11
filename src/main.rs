@@ -3,6 +3,7 @@ mod handlers;
 mod models;
 mod router;
 mod screens;
+mod utility;
 mod widgets;
 
 use anyhow::Result;
