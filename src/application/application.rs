@@ -87,10 +87,11 @@ impl Application {
                 logger.log(&Record::new(
                     lightning::util::logger::Level::Debug,
                     format_args!(
-                        "current route: {:?}, current active: {:?}, current stack: {:?}",
+                        "current route: {:?}, current active: {:?}, current stack: {:?}, current items: {:?}",
                         state.router.get_current_route(),
                         state.router.get_active_block(),
-                        state.router.get_stack()
+                        state.router.get_stack(),
+                        screen.current_menu_list,
                     ),
                     "application",
                     "",

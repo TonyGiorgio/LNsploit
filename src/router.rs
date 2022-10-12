@@ -12,6 +12,7 @@ pub enum NodeSubLocation {
     ActionMenu,
     ConnectPeer,
     ListChannels,
+    OpenChannel(Vec<String>),
     NewAddress,
 }
 
@@ -100,6 +101,14 @@ impl Router {
 
     pub fn get_current_route(&self) -> &Location {
         &self.active_route
+    }
+
+    pub fn peak_next_stack(&self) -> &Location {
+        match self.screen_stack.len() {
+            0 => &Location::Home,
+            1 => &Location::Home,
+            l => &self.screen_stack[l - 2],
+        }
     }
 
     pub fn get_stack(&self) -> &Vec<Location> {
