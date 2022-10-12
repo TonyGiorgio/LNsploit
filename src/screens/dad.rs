@@ -128,8 +128,8 @@ impl ParentScreen {
             {
                 Ok(_) => {
                     state.logger.clone().log(&Record::new(
-                        lightning::util::logger::Level::Debug,
-                        format_args!("connected to peer I guess!"),
+                        lightning::util::logger::Level::Info,
+                        format_args!("connected to peer"),
                         "dad",
                         "",
                         334,
@@ -137,7 +137,7 @@ impl ParentScreen {
                 }
                 Err(e) => {
                     state.logger.clone().log(&Record::new(
-                        lightning::util::logger::Level::Debug,
+                        lightning::util::logger::Level::Error,
                         format_args!("{}", e),
                         "dad",
                         "",
@@ -155,6 +155,8 @@ impl ParentScreen {
         pubkey: &str,
         state: &mut AppState,
     ) -> Option<Action> {
+        let item = self.current_menu_list[self.menu_index].clone();
+
         let node_id = state
             .node_manager
             .lock()
@@ -163,8 +165,34 @@ impl ParentScreen {
             .await
             .expect("Pubkey should have corresponding node_id");
 
-        // TODO
-        None
+        match state
+            .node_manager
+            .lock()
+            .await
+            .open_channel(node_id, item, 100_000)
+            .await
+        {
+            Ok(_) => {
+                state.logger.clone().log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!("Opened channel to peer"),
+                    "dad",
+                    "",
+                    334,
+                ));
+                None
+            }
+            Err(e) => {
+                state.logger.clone().log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("{}", e),
+                    "dad",
+                    "",
+                    334,
+                ));
+                None
+            }
+        }
     }
 
     async fn handle_enter_exploit_action(&self, state: &mut AppState) -> Option<Action> {

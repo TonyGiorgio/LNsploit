@@ -687,8 +687,8 @@ impl RunnableNode {
         pubkey: String,
         amount_sat: u64,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let pubkey = to_compressed_pubkey(String::as_str(&pubkey.clone()));
-        if pubkey.is_none() {
+        let compressed_pubkey = to_compressed_pubkey(String::as_str(&pubkey.clone()));
+        if compressed_pubkey.is_none() {
             self.logger.log(&Record::new(
                 lightning::util::logger::Level::Error,
                 format_args!("ERROR: could not parse peer pubkey"),
@@ -712,10 +712,13 @@ impl RunnableNode {
             ..Default::default()
         };
 
-        match self
-            .channel_manager
-            .create_channel(pubkey.unwrap(), amount_sat, 0, 0, Some(config))
-        {
+        match self.channel_manager.create_channel(
+            compressed_pubkey.unwrap(),
+            amount_sat,
+            0,
+            0,
+            Some(config),
+        ) {
             Ok(_) => {
                 self.logger.log(&Record::new(
                     lightning::util::logger::Level::Info,
@@ -729,7 +732,10 @@ impl RunnableNode {
             Err(e) => {
                 self.logger.log(&Record::new(
                     lightning::util::logger::Level::Error,
-                    format_args!("ERROR: failed to open channel: {:?}", e),
+                    format_args!(
+                        "ERROR: failed to open channel to pubkey {:?}: {:?}",
+                        pubkey, e
+                    ),
                     "node",
                     "",
                     0,

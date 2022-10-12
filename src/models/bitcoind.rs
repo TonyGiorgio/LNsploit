@@ -171,7 +171,7 @@ impl BlockSource for &LdkBitcoindClient {
     }
 }
 
-const MIN_FEERATE: u32 = 253;
+const MIN_FEERATE: u32 = 253 * 4;
 
 impl FeeEstimator for LdkBitcoindClient {
     fn get_est_sat_per_1000_weight(&self, confirmation_target: ConfirmationTarget) -> u32 {
@@ -183,7 +183,7 @@ impl FeeEstimator for LdkBitcoindClient {
                 match res {
                     Ok(res) => {
                         if let Some(fee_rate) = res.fee_rate {
-                            std::cmp::max(MIN_FEERATE, (fee_rate.to_sat() / 4) as u32)
+                            std::cmp::max(MIN_FEERATE, (fee_rate.to_sat()) as u32)
                         } else {
                             MIN_FEERATE
                         }
@@ -198,7 +198,7 @@ impl FeeEstimator for LdkBitcoindClient {
                 match res {
                     Ok(res) => {
                         if let Some(fee_rate) = res.fee_rate {
-                            std::cmp::max(MIN_FEERATE, (fee_rate.to_sat() / 4) as u32)
+                            std::cmp::max(MIN_FEERATE, (fee_rate.to_sat()) as u32)
                         } else {
                             // TODO probably not min for normal
                             MIN_FEERATE
@@ -215,7 +215,7 @@ impl FeeEstimator for LdkBitcoindClient {
                 match res {
                     Ok(res) => {
                         if let Some(fee_rate) = res.fee_rate {
-                            std::cmp::max(MIN_FEERATE, (fee_rate.to_sat() / 4) as u32)
+                            std::cmp::max(MIN_FEERATE, (fee_rate.to_sat()) as u32)
                         } else {
                             // TODO probably not min for high
                             MIN_FEERATE
