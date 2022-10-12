@@ -11,6 +11,7 @@ pub enum Location {
 pub enum NodeSubLocation {
     ActionMenu,
     ConnectPeer,
+    PayInvoice,
     ListChannels,
     OpenChannel(Vec<String>),
     NewAddress,
