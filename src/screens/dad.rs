@@ -79,8 +79,15 @@ impl ParentScreen {
         let action = match String::as_str(&item) {
             "Connect Peer" => {
                 // the next screen for connect peer will allow input
+                // TODO i don't think this is ever used
                 state.input_mode = InputMode::Editing;
                 Action::Push(Location::Node(pubkey.into(), NodeSubLocation::ConnectPeer))
+            }
+            "Pay" => {
+                // the next screen for pay invoice will allow input
+                // TODO i don't think this is ever used
+                state.input_mode = InputMode::Editing;
+                Action::Push(Location::Node(pubkey.into(), NodeSubLocation::PayInvoice))
             }
             "Open Channel" => {
                 // get the list of nodes that the peer is connect to to open channel with
@@ -130,6 +137,50 @@ impl ParentScreen {
                     state.logger.clone().log(&Record::new(
                         lightning::util::logger::Level::Info,
                         format_args!("connected to peer"),
+                        "dad",
+                        "",
+                        334,
+                    ));
+                }
+                Err(e) => {
+                    state.logger.clone().log(&Record::new(
+                        lightning::util::logger::Level::Error,
+                        format_args!("{}", e),
+                        "dad",
+                        "",
+                        334,
+                    ));
+                }
+            }
+        }
+
+        None
+    }
+
+    async fn handle_pay_invoice_action(
+        &self,
+        pubkey: &str,
+        state: &mut AppState,
+    ) -> Option<Action> {
+        let node_id = state
+            .node_manager
+            .lock()
+            .await
+            .get_node_id_by_pubkey(pubkey)
+            .await
+            .expect("Pubkey should have corresponding node_id");
+
+        if let Some(invoice_string) = state.paste_contents.clone() {
+            match state
+                .node_manager
+                .lock()
+                .await
+                .pay_invoice(node_id, invoice_string.to_string())
+            {
+                Ok(_) => {
+                    state.logger.clone().log(&Record::new(
+                        lightning::util::logger::Level::Info,
+                        format_args!("initiated invoice payment"),
                         "dad",
                         "",
                         334,
@@ -266,10 +317,11 @@ impl ParentScreen {
                     .iter()
                     .map(|x| String::from(*x))
                     .collect::<Vec<String>>(),
-                NodeSubLocation::ConnectPeer => vec![],
-                NodeSubLocation::ListChannels => vec![],
+                NodeSubLocation::ConnectPeer => vec![], // NO LIST
+                NodeSubLocation::PayInvoice => vec![],  // NO LIST
+                NodeSubLocation::ListChannels => vec![], // TODO
                 NodeSubLocation::OpenChannel(pubkeys) => pubkeys.clone(),
-                NodeSubLocation::NewAddress => vec![],
+                NodeSubLocation::NewAddress => vec![], // NO LIST
             },
             Location::NodesList => state
                 .cached_nodes_list
@@ -541,6 +593,11 @@ impl Screen for ParentScreen {
                                 NodeSubLocation::ConnectPeer => {
                                     let action =
                                         self.handle_connect_peer_action(&pubkey, state).await;
+                                    action
+                                }
+                                NodeSubLocation::PayInvoice => {
+                                    let action =
+                                        self.handle_pay_invoice_action(&pubkey, state).await;
                                     action
                                 }
                                 NodeSubLocation::OpenChannel(_) => {
