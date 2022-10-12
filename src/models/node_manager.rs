@@ -97,6 +97,12 @@ impl NodeManager {
         node.list_channels()
     }
 
+    pub fn list_peers(&mut self, node_id: String) -> Vec<String> {
+        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+
+        node.list_peers()
+    }
+
     pub fn create_invoice(
         &mut self,
         node_id: String,

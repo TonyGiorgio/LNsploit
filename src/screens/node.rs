@@ -17,8 +17,9 @@ use crate::{
 
 use super::ScreenFrame;
 
-pub const NODE_ACTION_MENU: [&str; 5] = [
+pub const NODE_ACTION_MENU: [&str; 6] = [
     "Connect Peer",
+    "Open Channel",
     "List Channels",
     "Invoice",
     "Pay",
@@ -67,6 +68,14 @@ pub fn draw_node(
             draw_connect_peer(frame, vertical_chunks[1], highlight_state, state)
         }
         NodeSubLocation::ListChannels => todo!(),
+        NodeSubLocation::OpenChannel(node_pubkeys) => draw_open_channel(
+            frame,
+            vertical_chunks[1],
+            highlight_state,
+            state,
+            menu_index,
+            node_pubkeys.clone(),
+        ),
         NodeSubLocation::NewAddress => todo!(),
     }
 }
@@ -123,4 +132,32 @@ fn draw_connect_peer(
         .block(Block::default().borders(Borders::ALL));
 
     frame.render_widget(textbox, inner_chunks[1]);
+}
+
+fn draw_open_channel(
+    frame: &mut ScreenFrame,
+    chunk: Rect,
+    highlight_state: (bool, bool),
+    state: &AppState,
+    menu_index: Option<usize>,
+    node_pubkeys: Vec<String>,
+) {
+    let border_color_style = {
+        if highlight_state.0 {
+            yellow()
+        } else if highlight_state.1 {
+            green()
+        } else {
+            white()
+        }
+    };
+
+    draw_selectable_list(
+        frame,
+        chunk,
+        "Select a node",
+        &node_pubkeys,
+        highlight_state,
+        menu_index,
+    )
 }

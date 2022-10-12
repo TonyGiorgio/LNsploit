@@ -674,6 +674,14 @@ impl RunnableNode {
         self.channel_manager.list_channels()
     }
 
+    pub fn list_peers(&self) -> Vec<String> {
+        self.peer_manager
+            .get_peer_node_ids()
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<String>>()
+    }
+
     pub async fn open_channel(
         &self,
         pubkey: String,

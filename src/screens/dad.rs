@@ -46,29 +46,15 @@ impl ParentScreen {
         }
     }
 
-    fn handle_enter_main(&mut self) -> Option<Action> {
+    fn handle_enter_main(&mut self, state: &mut AppState) -> Option<Action> {
         let item = self.current_menu_list[self.menu_index].clone();
 
-        let (action, new_items) = match String::as_str(&item) {
-            "Nodes" => (Action::Push(Location::NodesList), vec![]),
-            "Simulation Mode" => (
-                Action::Push(Location::Simulation),
-                SIMULATION_MENU
-                    .iter()
-                    .map(|x| String::from(*x))
-                    .collect::<Vec<String>>(),
-            ),
-            "Exploits" => (
-                Action::Push(Location::Exploits),
-                EXPLOIT_ACTION_MENU
-                    .iter()
-                    .map(|x| String::from(*x))
-                    .collect::<Vec<String>>(),
-            ),
+        let action = match String::as_str(&item) {
+            "Nodes" => Action::Push(Location::NodesList),
+            "Simulation Mode" => Action::Push(Location::Simulation),
+            "Exploits" => Action::Push(Location::Exploits),
             _ => return None,
         };
-
-        self.current_menu_list = new_items;
 
         Some(action)
     }
@@ -87,7 +73,7 @@ impl ParentScreen {
         Some(action)
     }
 
-    fn handle_enter_node_action(&self, pubkey: &str, state: &mut AppState) -> Option<Action> {
+    async fn handle_enter_node_action(&self, pubkey: &str, state: &mut AppState) -> Option<Action> {
         let item = self.current_menu_list[self.menu_index].clone();
 
         let action = match String::as_str(&item) {
@@ -95,6 +81,23 @@ impl ParentScreen {
                 // the next screen for connect peer will allow input
                 state.input_mode = InputMode::Editing;
                 Action::Push(Location::Node(pubkey.into(), NodeSubLocation::ConnectPeer))
+            }
+            "Open Channel" => {
+                // get the list of nodes that the peer is connect to to open channel with
+                let node_id = state
+                    .node_manager
+                    .lock()
+                    .await
+                    .get_node_id_by_pubkey(pubkey)
+                    .await
+                    .expect("Pubkey should have corresponding node_id");
+
+                let peer_pubkeys = state.node_manager.lock().await.list_peers(node_id);
+
+                Action::Push(Location::Node(
+                    pubkey.into(),
+                    NodeSubLocation::OpenChannel(peer_pubkeys),
+                ))
             }
             _ => return None,
         };
@@ -144,6 +147,23 @@ impl ParentScreen {
             }
         }
 
+        None
+    }
+
+    async fn handle_open_channel_action(
+        &self,
+        pubkey: &str,
+        state: &mut AppState,
+    ) -> Option<Action> {
+        let node_id = state
+            .node_manager
+            .lock()
+            .await
+            .get_node_id_by_pubkey(pubkey)
+            .await
+            .expect("Pubkey should have corresponding node_id");
+
+        // TODO
         None
     }
 
@@ -199,22 +219,50 @@ impl ParentScreen {
         };
 
         // reset menu list
-        // TODO: wish we had a slicker way of handling sub-menus
-        self.current_menu_list = match state.router.get_current_route() {
-            Location::Node(_, _) => NODE_ACTION_MENU
+        self.set_list(state, Some(state.router.peak_next_stack().clone()));
+
+        // pop the current main screen
+        Some(Action::Pop)
+    }
+
+    fn set_list(&mut self, state: &mut AppState, next_location: Option<Location>) {
+        let current_route = if let Some(next_location) = next_location {
+            next_location
+        } else {
+            state.router.get_current_route().clone()
+        };
+
+        self.current_menu_list = match current_route {
+            Location::Node(_, node_sub_location) => match node_sub_location {
+                NodeSubLocation::ActionMenu => NODE_ACTION_MENU
+                    .iter()
+                    .map(|x| String::from(*x))
+                    .collect::<Vec<String>>(),
+                NodeSubLocation::ConnectPeer => vec![],
+                NodeSubLocation::ListChannels => vec![],
+                NodeSubLocation::OpenChannel(pubkeys) => pubkeys.clone(),
+                NodeSubLocation::NewAddress => vec![],
+            },
+            Location::NodesList => state
+                .cached_nodes_list
+                .iter()
+                .map(|x| String::from(x))
+                .collect::<Vec<String>>(),
+            Location::Exploits => EXPLOIT_ACTION_MENU
                 .iter()
                 .map(|x| String::from(*x))
                 .collect::<Vec<String>>(),
-            _ => MAIN_MENU
+            Location::Home => MAIN_MENU
+                .iter()
+                .map(|x| String::from(*x))
+                .collect::<Vec<String>>(),
+            Location::Simulation => SIMULATION_MENU
                 .iter()
                 .map(|x| String::from(*x))
                 .collect::<Vec<String>>(),
         };
 
         self.menu_index = 0;
-
-        // pop the current main screen
-        Some(Action::Pop)
     }
 
     fn handle_enter_node_list(&mut self, state: &mut AppState) -> Option<Action> {
@@ -422,14 +470,24 @@ impl Screen for ParentScreen {
                 }
                 KeyCode::Esc => {
                     let new_action = self.handle_esc(state);
-                    self.menu_index = 0; // reset when pressed
+                    // if esc does something, always try to reset items
+                    let next_location = if let Some(new_action) = new_action.clone() {
+                        match new_action.clone() {
+                            Action::Push(location) => Some(location),
+                            Action::Replace(location) => Some(location),
+                            Action::Pop => Some(state.router.peak_next_stack().clone()),
+                        }
+                    } else {
+                        Some(state.router.peak_next_stack().clone())
+                    };
+                    self.set_list(state, next_location);
                     return Ok(new_action);
                 }
                 KeyCode::Enter => {
                     // check if enter is on main screen or node screen
                     let current_route = { state.router.get_active_block().clone() };
                     let new_action = match current_route {
-                        ActiveBlock::Menu => self.handle_enter_main(),
+                        ActiveBlock::Menu => self.handle_enter_main(state),
                         ActiveBlock::Nodes => self.handle_enter_node(),
                         ActiveBlock::Main(location) => match location {
                             Location::Home => None,
@@ -437,7 +495,8 @@ impl Screen for ParentScreen {
                             Location::Exploits => self.handle_enter_exploit_action(state).await,
                             Location::Node(pubkey, sub_location) => match sub_location {
                                 NodeSubLocation::ActionMenu => {
-                                    let action = self.handle_enter_node_action(&pubkey, state);
+                                    let action =
+                                        self.handle_enter_node_action(&pubkey, state).await;
                                     state.logger.clone().log(&Record::new(
                                         lightning::util::logger::Level::Debug,
                                         format_args!(
@@ -456,6 +515,11 @@ impl Screen for ParentScreen {
                                         self.handle_connect_peer_action(&pubkey, state).await;
                                     action
                                 }
+                                NodeSubLocation::OpenChannel(_) => {
+                                    let action =
+                                        self.handle_open_channel_action(&pubkey, state).await;
+                                    action
+                                }
                                 NodeSubLocation::ListChannels => None,
                                 NodeSubLocation::NewAddress => None,
                             },
@@ -463,7 +527,20 @@ impl Screen for ParentScreen {
                         },
                         _ => None,
                     };
-                    self.menu_index = 0; // reset when pressed
+
+                    // if enter does something, always try to reset items
+                    if let Some(new_action) = new_action.clone() {
+                        self.set_list(
+                            state,
+                            match new_action.clone() {
+                                Action::Push(location) => Some(location),
+                                Action::Replace(location) => Some(location),
+                                Action::Pop => Some(state.router.peak_next_stack().clone()),
+                            },
+                        );
+                    }
+
+                    self.menu_index = 0; // always reset when pressed
                     return Ok(new_action);
                 }
                 KeyCode::Up => {
