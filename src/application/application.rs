@@ -25,6 +25,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tui::{backend::CrosstermBackend, Terminal};
 
+use super::Toast;
+
 // Toggle the noisiest logs
 const VERBOSE: bool = false;
 
@@ -35,6 +37,7 @@ pub struct AppState {
     pub logger: Arc<FilesystemLogger>,
     pub input_mode: InputMode,
     pub paste_contents: Option<Arc<String>>, // pub clipboard_provider: Arc<Box<dyn ClipboardProvider>>,
+    pub toast: Option<Toast>,
 }
 
 pub struct Application {
@@ -78,6 +81,7 @@ impl Application {
             logger: logger.clone(),
             input_mode: InputMode::Normal,
             paste_contents: None, // clipboard_provider: Arc::new(get_clipboard_provider()),
+            toast: Some(Toast::new("Hello!", true)),
         };
 
         let mut screen = ParentScreen::new();
@@ -125,6 +129,28 @@ impl Application {
 
             let screen_event = match inputs.recv() {
                 Ok(event) => match event {
+                    AppEvent::Tick => {
+                        if let Some(mut toast) = state.toast.clone() {
+                            toast.tick_tock();
+
+                            if VERBOSE {
+                                logger.log(&Record::new(
+                                    lightning::util::logger::Level::Debug,
+                                    format_args!("ticking! {:?}", toast),
+                                    "application",
+                                    "",
+                                    0,
+                                ));
+                            }
+
+                            if toast.should_disappear() {
+                                state.toast = None;
+                            } else {
+                                state.toast = Some(toast);
+                            }
+                        }
+                        None
+                    }
                     AppEvent::Quit => {
                         // do not allow in editing mode, pass q normally
                         if matches!(state.input_mode, InputMode::Editing) {

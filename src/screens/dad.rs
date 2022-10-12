@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use super::{
-    draw_exploits, draw_node, draw_simulation, draw_welcome, AppEvent, InputMode, Screen,
-    ScreenFrame, EXPLOIT_ACTION_MENU, NODE_ACTION_MENU, SIMULATION_MENU,
+    draw_exploits, draw_footer, draw_node, draw_simulation, draw_welcome, AppEvent, InputMode,
+    Screen, ScreenFrame, EXPLOIT_ACTION_MENU, NODE_ACTION_MENU, SIMULATION_MENU,
 };
 use crate::{
     application::AppState,
@@ -596,16 +596,7 @@ impl Screen for ParentScreen {
             _ => draw_welcome(frame, horizontal_chunks[1]),
         };
 
-        let footer_block = Paragraph::new(Text::from(
-            "q: Quit, esc: Back, M: Main Menu, L: Nodes Menu, N: Create new node",
-        ))
-        .block(
-            Block::default()
-                .title("Keymap")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::LightBlue)),
-        );
-        frame.render_widget(footer_block, parent_chunks[1]);
+        draw_footer(frame, parent_chunks[1], state);
     }
 
     async fn handle_input(
