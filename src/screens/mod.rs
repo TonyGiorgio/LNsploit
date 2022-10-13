@@ -1,5 +1,6 @@
 mod dad;
 mod exploit;
+mod footer;
 mod node;
 mod screen;
 mod simulation;
@@ -7,6 +8,7 @@ mod welcome;
 
 pub use dad::*;
 pub use exploit::*;
+pub use footer::*;
 pub use node::*;
 pub use screen::*;
 pub use simulation::*;
