@@ -7,13 +7,14 @@ use super::{
 use crate::{
     application::AppState,
     handlers::{on_down_press_handler, on_up_press_handler},
+    models::{hex_str, to_vec},
     router::{Action, ActiveBlock, Location, NodeSubLocation},
     widgets::draw::draw_selectable_list,
 };
 use anyhow::Result;
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
-
+use hex;
 use lightning::util::logger::{Logger, Record};
 use tui::{
     layout::{Constraint, Direction, Layout},
@@ -88,6 +89,42 @@ impl ParentScreen {
                 // TODO i don't think this is ever used
                 state.input_mode = InputMode::Editing;
                 Action::Push(Location::Node(pubkey.into(), NodeSubLocation::PayInvoice))
+            }
+            "Broadcast revoked commitment transaction" => {
+                // no next screen, just a force close action
+                let node_id = state
+                    .node_manager
+                    .lock()
+                    .await
+                    .get_node_id_by_pubkey(pubkey)
+                    .await
+                    .expect("Pubkey should have corresponding node_id");
+
+                let channels = state
+                    .node_manager
+                    .lock()
+                    .await
+                    .list_channels(node_id)
+                    .iter()
+                    .map(|c| {
+                        String::from(c.counterparty.node_id.to_string())
+                            + ":"
+                            + String::as_str(&hex_str(&c.channel_id))
+                    })
+                    .collect();
+
+                state.logger.clone().log(&Record::new(
+                    lightning::util::logger::Level::Debug,
+                    format_args!("channels: {:?}", channels),
+                    "dad",
+                    "",
+                    334,
+                ));
+
+                Action::Push(Location::Node(
+                    pubkey.into(),
+                    NodeSubLocation::Suicide(channels),
+                ))
             }
             "Open Channel" => {
                 // get the list of nodes that the peer is connect to to open channel with
@@ -246,6 +283,58 @@ impl ParentScreen {
         }
     }
 
+    async fn handle_force_close_prev_channel_action(
+        &self,
+        pubkey: &str,
+        state: &mut AppState,
+    ) -> Option<Action> {
+        let item = self.current_menu_list[self.menu_index].clone();
+        let mut items = item.split(':');
+        let counterparty_pubkey = items.next();
+        let channel_id = items.next();
+
+        let node_id = state
+            .node_manager
+            .lock()
+            .await
+            .get_node_id_by_pubkey(pubkey)
+            .await
+            .expect("Pubkey should have corresponding node_id");
+
+        match state
+            .node_manager
+            .lock()
+            .await
+            .force_close_channel_with_initial_state(
+                node_id,
+                String::from(channel_id.unwrap()),
+                String::from(counterparty_pubkey.unwrap()),
+            )
+            .await
+        {
+            Ok(_) => {
+                state.logger.clone().log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!("force closed transaction"),
+                    "dad",
+                    "",
+                    334,
+                ));
+                None
+            }
+            Err(e) => {
+                state.logger.clone().log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("{}", e),
+                    "dad",
+                    "",
+                    334,
+                ));
+                None
+            }
+        }
+    }
+
     async fn handle_enter_exploit_action(&self, state: &mut AppState) -> Option<Action> {
         let action = match self.menu_index {
             0 => {
@@ -319,6 +408,7 @@ impl ParentScreen {
                     .collect::<Vec<String>>(),
                 NodeSubLocation::ConnectPeer => vec![], // NO LIST
                 NodeSubLocation::PayInvoice => vec![],  // NO LIST
+                NodeSubLocation::Suicide(channels) => channels,
                 NodeSubLocation::ListChannels => vec![], // TODO
                 NodeSubLocation::OpenChannel(pubkeys) => pubkeys.clone(),
                 NodeSubLocation::NewAddress => vec![], // NO LIST
@@ -603,6 +693,12 @@ impl Screen for ParentScreen {
                                 NodeSubLocation::OpenChannel(_) => {
                                     let action =
                                         self.handle_open_channel_action(&pubkey, state).await;
+                                    action
+                                }
+                                NodeSubLocation::Suicide(_) => {
+                                    let action = self
+                                        .handle_force_close_prev_channel_action(&pubkey, state)
+                                        .await;
                                     action
                                 }
                                 NodeSubLocation::ListChannels => None,

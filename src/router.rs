@@ -13,6 +13,7 @@ pub enum NodeSubLocation {
     ConnectPeer,
     PayInvoice,
     ListChannels,
+    Suicide(Vec<String>),
     OpenChannel(Vec<String>),
     NewAddress,
 }

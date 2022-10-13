@@ -7,6 +7,7 @@ diesel::table! {
         channel_tx_id -> Text,
         channel_tx_index -> Integer,
         channel_monitor_data -> Binary,
+        original_channel_monitor_data -> Binary,
     }
 }
 

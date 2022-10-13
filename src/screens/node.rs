@@ -17,13 +17,14 @@ use crate::{
 
 use super::ScreenFrame;
 
-pub const NODE_ACTION_MENU: [&str; 6] = [
+pub const NODE_ACTION_MENU: [&str; 7] = [
     "Connect Peer",
     "Open Channel",
     "List Channels",
     "Invoice",
     "Pay",
     "New On Chain Address",
+    "Broadcast revoked commitment transaction",
 ];
 
 pub fn draw_node(
@@ -70,6 +71,14 @@ pub fn draw_node(
         NodeSubLocation::PayInvoice => {
             draw_pay_invoice(frame, vertical_chunks[1], highlight_state, state)
         }
+        NodeSubLocation::Suicide(channels) => draw_force_close_channel(
+            frame,
+            vertical_chunks[1],
+            highlight_state,
+            state,
+            menu_index,
+            channels.clone(),
+        ),
         NodeSubLocation::ListChannels => todo!(),
         NodeSubLocation::OpenChannel(node_pubkeys) => draw_open_channel(
             frame,
@@ -189,6 +198,34 @@ fn draw_pay_invoice(
         .block(Block::default().borders(Borders::ALL));
 
     frame.render_widget(textbox, inner_chunks[1]);
+}
+
+fn draw_force_close_channel(
+    frame: &mut ScreenFrame,
+    chunk: Rect,
+    highlight_state: (bool, bool),
+    state: &AppState,
+    menu_index: Option<usize>,
+    channels: Vec<String>,
+) {
+    let border_color_style = {
+        if highlight_state.0 {
+            yellow()
+        } else if highlight_state.1 {
+            green()
+        } else {
+            white()
+        }
+    };
+
+    draw_selectable_list(
+        frame,
+        chunk,
+        "Select a channel to force close",
+        &channels,
+        highlight_state,
+        menu_index,
+    )
 }
 
 fn draw_open_channel(

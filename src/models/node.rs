@@ -82,6 +82,7 @@ pub struct RunnableNode {
     pub channel_manager: Arc<RunnableChannelManager>,
     pub network_graph: Arc<NetworkGraph>,
     pub onion_messenger: Arc<OnionMessenger>,
+    pub chain_monitor: Arc<ChainMonitor>,
     inbound_payments: PaymentInfoStorage,
     outbound_payments: PaymentInfoStorage,
 }
@@ -171,7 +172,7 @@ impl RunnableNode {
 
         // read channelmonitor state from disk
         let mut channelmonitors = persister
-            .read_channelmonitors(keys_manager.clone())
+            .read_channelmonitors(keys_manager.clone(), false)
             .unwrap();
 
         // Load channel monitor updates from disk as well
@@ -333,6 +334,7 @@ impl RunnableNode {
             let channel_monitor = item.1 .0;
             let funding_outpoint = item.2;
             chain_monitor
+                .clone()
                 .watch_channel(funding_outpoint, channel_monitor)
                 .unwrap();
         }
@@ -515,6 +517,7 @@ impl RunnableNode {
         let background_processor_invoice_payer = invoice_payer.clone();
         let background_processor_peer_manager = peer_manager.clone();
         let background_processor_channel_manager = channel_manager.clone();
+        let background_chain_monitor = chain_monitor.clone();
         tokio::spawn(async move {
             background_processor_logger.log(&Record::new(
                 lightning::util::logger::Level::Info,
@@ -530,7 +533,7 @@ impl RunnableNode {
             let _background_processor = BackgroundProcessor::start(
                 kv_persister,
                 background_processor_invoice_payer.clone(),
-                chain_monitor.clone(),
+                background_chain_monitor.clone(),
                 background_processor_channel_manager.clone(),
                 GossipSync::p2p(gossip_sync.clone()),
                 background_processor_peer_manager.clone(),
@@ -573,6 +576,7 @@ impl RunnableNode {
             onion_messenger,
             inbound_payments,
             outbound_payments,
+            chain_monitor: chain_monitor.clone(),
         });
     }
 
@@ -671,7 +675,16 @@ impl RunnableNode {
     }
 
     pub fn list_channels(&self) -> Vec<ChannelDetails> {
-        self.channel_manager.list_channels()
+        let channels = self.channel_manager.list_channels();
+
+        self.logger.log(&Record::new(
+            lightning::util::logger::Level::Debug,
+            format_args!("Channels: {:?}", channels),
+            "node",
+            "",
+            0,
+        ));
+        channels
     }
 
     pub fn list_peers(&self) -> Vec<String> {
@@ -808,6 +821,130 @@ impl RunnableNode {
                 return Err("failed to open channel".into());
             }
         }
+    }
+
+    pub async fn force_close_channel_with_initial_state(
+        &self,
+        channel_id: String,
+        peer_pubkey: String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // first load a version of the chain monitor with the
+        // initial data of each channel
+        let original_channel_monitor = self
+            .persister
+            .read_channelmonitors(self.keys_manager.clone(), true)
+            .unwrap();
+
+        // now proceed with force close logic
+        let channel_id_vec = to_vec(String::as_str(&channel_id));
+        if channel_id_vec.is_none() || channel_id_vec.as_ref().unwrap().len() != 32 {
+            self.logger.log(&Record::new(
+                lightning::util::logger::Level::Error,
+                format_args!("ERROR: failed to parse channel_id: {}", &channel_id),
+                "node",
+                "",
+                0,
+            ));
+            return Err("failed to open channel".into());
+        }
+
+        let mut channel_id = [0; 32];
+        channel_id.copy_from_slice(&channel_id_vec.unwrap());
+
+        let peer_pubkey_vec = match to_vec(String::as_str(&peer_pubkey)) {
+            Some(peer_pubkey_vec) => peer_pubkey_vec,
+            None => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: could not parse pubkey"),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("could not parse pubkey".into());
+            }
+        };
+        let peer_pubkey = match PublicKey::from_slice(&peer_pubkey_vec) {
+            Ok(peer_pubkey) => peer_pubkey,
+            Err(_) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("ERROR: could not parse pubkey"),
+                    "node",
+                    "",
+                    0,
+                ));
+                return Err("could not parse pubkey".into());
+            }
+        };
+
+        // look for the specific channel monitor for this channel
+        for (_, individual_channel_monitor) in original_channel_monitor {
+            if individual_channel_monitor
+                .get_counterparty_node_id()
+                .unwrap()
+                == peer_pubkey
+            {
+                // check how much this channel balance says we have first
+                let balances = individual_channel_monitor.get_claimable_balances();
+                let mut total_balance = 0;
+                for balance in balances {
+                    match balance {
+                        chain::channelmonitor::Balance::ClaimableOnChannelClose {
+                            claimable_amount_satoshis,
+                        } => total_balance += claimable_amount_satoshis,
+                        chain::channelmonitor::Balance::ClaimableAwaitingConfirmations {
+                            claimable_amount_satoshis,
+                            confirmation_height: _,
+                        } => total_balance += claimable_amount_satoshis,
+                        chain::channelmonitor::Balance::ContentiousClaimable {
+                            claimable_amount_satoshis,
+                            timeout_height: _,
+                        } => total_balance += claimable_amount_satoshis,
+                        chain::channelmonitor::Balance::MaybeTimeoutClaimableHTLC {
+                            claimable_amount_satoshis,
+                            claimable_height: _,
+                        } => total_balance += claimable_amount_satoshis,
+                        chain::channelmonitor::Balance::MaybePreimageClaimableHTLC {
+                            claimable_amount_satoshis,
+                            expiry_height: _,
+                        } => total_balance += claimable_amount_satoshis,
+                        chain::channelmonitor::Balance::CounterpartyRevokedOutputClaimable {
+                            claimable_amount_satoshis,
+                        } => total_balance += claimable_amount_satoshis,
+                    }
+                }
+
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!(
+                        "Original balance that we are broadcasting old state for: {}",
+                        total_balance
+                    ),
+                    "node",
+                    "",
+                    0,
+                ));
+
+                // now force close
+                // TODO this might be a different channel with the same peer
+                let old_txs = individual_channel_monitor
+                    .get_latest_holder_commitment_txn(&self.logger.clone());
+
+                for old_tx in old_txs {
+                    self.logger.log(&Record::new(
+                        lightning::util::logger::Level::Info,
+                        format_args!("Broacasting old tx: {:?}", old_tx),
+                        "node",
+                        "",
+                        0,
+                    ));
+                    self.ldk_bitcoind_client.broadcast_transaction(&old_tx);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn create_address(&self) -> Result<String, Box<dyn std::error::Error>> {

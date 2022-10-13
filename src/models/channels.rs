@@ -30,6 +30,7 @@ pub struct ChannelMonitor {
     pub channel_tx_id: String,
     pub channel_tx_index: i32,
     pub channel_monitor_data: Vec<u8>,
+    pub original_channel_monitor_data: Vec<u8>,
 }
 
 #[derive(Insertable)]
@@ -40,6 +41,7 @@ pub struct NewChannelMonitor<'a> {
     pub channel_tx_id: &'a str,
     pub channel_tx_index: i32,
     pub channel_monitor_data: Vec<u8>,
+    pub original_channel_monitor_data: Vec<u8>,
 }
 
 #[derive(Queryable)]
@@ -93,6 +95,7 @@ impl NodePersister {
     pub fn read_channelmonitors<Signer: Sign, K: Deref>(
         &self,
         keys_manager: K,
+        original: bool,
     ) -> Result<Vec<(BlockHash, channelmonitor::ChannelMonitor<Signer>)>, std::io::Error>
     where
         K::Target: KeysInterface<Signer = Signer> + Sized,
@@ -115,8 +118,11 @@ impl NodePersister {
                 ));
             }
             let index = channel_monitor_item.channel_tx_index;
-
-            let contents = channel_monitor_item.channel_monitor_data;
+            let contents = if original {
+                channel_monitor_item.original_channel_monitor_data
+            } else {
+                channel_monitor_item.channel_monitor_data
+            };
             let mut buffer = Cursor::new(&contents);
             match <(BlockHash, channelmonitor::ChannelMonitor<Signer>)>::read(
                 &mut buffer,
@@ -222,7 +228,8 @@ impl<ChannelSigner: Sign> chainmonitor::Persist<ChannelSigner> for NodePersister
                     node_id: String::as_str(&self.node_db_id),
                     channel_tx_id: String::as_str(&funding_txo_txid),
                     channel_tx_index: funding_txo.index as i32,
-                    channel_monitor_data: monitor_data,
+                    channel_monitor_data: monitor_data.clone(),
+                    original_channel_monitor_data: monitor_data.clone(),
                 };
                 match diesel::insert_into(channel_monitors)
                     .values(&new_channel_monitor)
