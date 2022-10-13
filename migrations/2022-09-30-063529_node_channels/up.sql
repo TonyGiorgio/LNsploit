@@ -4,6 +4,7 @@ CREATE TABLE channel_monitors (
   channel_tx_id CHAR(64) NOT NULL,
   channel_tx_index INTEGER NOT NULL,
   channel_monitor_data BLOB NOT NULL,
+  original_channel_monitor_data BLOB NOT NULL,
   UNIQUE(node_id, channel_tx_id, channel_tx_index)
 );
 

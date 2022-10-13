@@ -145,6 +145,18 @@ impl NodeManager {
         node.close_channel(channel_id, peer_pubkey).await
     }
 
+    pub async fn force_close_channel_with_initial_state(
+        &mut self,
+        node_id: String,
+        channel_id: String,
+        peer_pubkey: String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+
+        node.force_close_channel_with_initial_state(channel_id, peer_pubkey)
+            .await
+    }
+
     pub fn create_address(
         &mut self,
         node_id: String,
