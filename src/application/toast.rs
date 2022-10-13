@@ -11,7 +11,7 @@ impl Toast {
     pub fn new(message: &str, good_news: bool) -> Self {
         Self {
             message: Arc::new(message.into()),
-            ticks_left: 20,
+            ticks_left: 10,
             good_news,
         }
     }

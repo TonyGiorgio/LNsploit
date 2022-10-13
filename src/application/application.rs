@@ -81,7 +81,7 @@ impl Application {
             logger: logger.clone(),
             input_mode: InputMode::Normal,
             paste_contents: None, // clipboard_provider: Arc::new(get_clipboard_provider()),
-            toast: Some(Toast::new("Hello!", true)),
+            toast: Some(Toast::new("Welcome to LNsploit!", true)),
         };
 
         let mut screen = ParentScreen::new();

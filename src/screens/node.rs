@@ -134,7 +134,7 @@ fn draw_connect_peer(
 
     frame.render_widget(outline, chunk);
 
-    let text = Text::from(format!("p2p connection string: (ctrl+p to paste it in)"));
+    let text = Text::from(format!("p2p connection string: (ctrl+v to paste it in)"));
     let help_text = Paragraph::new(text).style(white()).block(Block::default());
 
     frame.render_widget(help_text, inner_chunks[0]);
@@ -188,7 +188,7 @@ fn draw_pay_invoice(
 
     frame.render_widget(outline, chunk);
 
-    let text = Text::from(format!("bolt11 invoice: (ctrl+p to paste it in)"));
+    let text = Text::from(format!("bolt11 invoice: (ctrl+v to paste it in)"));
     let help_text = Paragraph::new(text).style(white()).block(Block::default());
 
     frame.render_widget(help_text, inner_chunks[0]);
