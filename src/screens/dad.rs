@@ -5,7 +5,7 @@ use super::{
     Screen, ScreenFrame, EXPLOIT_ACTION_MENU, NODE_ACTION_MENU, SIMULATION_MENU,
 };
 use crate::{
-    application::AppState,
+    application::{AppState, Toast},
     handlers::{on_down_press_handler, on_up_press_handler},
     models::{hex_str, to_vec},
     router::{Action, ActiveBlock, Location, NodeSubLocation},
@@ -171,6 +171,7 @@ impl ParentScreen {
                 .await
             {
                 Ok(_) => {
+                    state.toast = Some(Toast::new("Connected to peer", true));
                     state.logger.clone().log(&Record::new(
                         lightning::util::logger::Level::Info,
                         format_args!("connected to peer"),
@@ -180,6 +181,7 @@ impl ParentScreen {
                     ));
                 }
                 Err(e) => {
+                    state.toast = Some(Toast::new("Could not connect to peer", false));
                     state.logger.clone().log(&Record::new(
                         lightning::util::logger::Level::Error,
                         format_args!("{}", e),
@@ -215,6 +217,7 @@ impl ParentScreen {
                 .pay_invoice(node_id, invoice_string.to_string())
             {
                 Ok(_) => {
+                    state.toast = Some(Toast::new("Initiated payment", true));
                     state.logger.clone().log(&Record::new(
                         lightning::util::logger::Level::Info,
                         format_args!("initiated invoice payment"),
@@ -224,6 +227,7 @@ impl ParentScreen {
                     ));
                 }
                 Err(e) => {
+                    state.toast = Some(Toast::new("Failed to initiated payment", false));
                     state.logger.clone().log(&Record::new(
                         lightning::util::logger::Level::Error,
                         format_args!("{}", e),
@@ -261,6 +265,7 @@ impl ParentScreen {
             .await
         {
             Ok(_) => {
+                state.toast = Some(Toast::new("Opened channel to peer", true));
                 state.logger.clone().log(&Record::new(
                     lightning::util::logger::Level::Info,
                     format_args!("Opened channel to peer"),
@@ -271,6 +276,7 @@ impl ParentScreen {
                 None
             }
             Err(e) => {
+                state.toast = Some(Toast::new("Failed to open channel to peer", false));
                 state.logger.clone().log(&Record::new(
                     lightning::util::logger::Level::Error,
                     format_args!("{}", e),
@@ -313,6 +319,7 @@ impl ParentScreen {
             .await
         {
             Ok(_) => {
+                state.toast = Some(Toast::new("Force closed channel", true));
                 state.logger.clone().log(&Record::new(
                     lightning::util::logger::Level::Info,
                     format_args!("force closed transaction"),
@@ -323,6 +330,7 @@ impl ParentScreen {
                 None
             }
             Err(e) => {
+                state.toast = Some(Toast::new("Failed to force close channel", false));
                 state.logger.clone().log(&Record::new(
                     lightning::util::logger::Level::Error,
                     format_args!("{}", e),
@@ -341,6 +349,7 @@ impl ParentScreen {
                 // Broadcast LND tx
                 match state.node_manager.lock().await.broadcast_lnd_15_exploit() {
                     Ok(_) => {
+                        state.toast = Some(Toast::new("Broadcast transaction!", true));
                         state.logger.clone().log(&Record::new(
                             lightning::util::logger::Level::Debug,
                             format_args!("broadcasted tx!"),
@@ -350,6 +359,7 @@ impl ParentScreen {
                         ));
                     }
                     Err(e) => {
+                        state.toast = Some(Toast::new("Failed to broadcast transaction", false));
                         state.logger.clone().log(&Record::new(
                             lightning::util::logger::Level::Debug,
                             format_args!("failure to broadcast tx: {}", e),

@@ -618,9 +618,18 @@ impl RunnableNode {
                 "",
                 0,
             ));
-        }
+            Ok(())
+        } else {
+            self.logger.log(&Record::new(
+                lightning::util::logger::Level::Error,
+                format_args!("ERROR: could not connect to peer: {}", pubkey),
+                "node",
+                "",
+                0,
+            ));
 
-        Ok(())
+            Err("could not connect to peer".into())
+        }
     }
 
     pub fn create_wallet(&self) -> Result<(), Box<dyn std::error::Error>> {
