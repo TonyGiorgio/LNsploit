@@ -283,7 +283,12 @@ pub fn broadcast_lnd_15_exploit(
 
     // find which output was used to fund the address
     let get_tx_out_result = bitcoind_client.get_tx_out(&txid, 0, Some(true))?;
-    let is_vout_0_opt = get_tx_out_result.map(|r| r.script_pub_key.hex == tr_script.serialize());
+    let is_vout_0_opt = get_tx_out_result.map(|r| {
+        r.script_pub_key
+            .script()
+            .map(|s| s == tr_script)
+            .unwrap_or(false)
+    });
     let is_vout_0 = is_vout_0_opt.unwrap_or(false);
     let vout = if is_vout_0 { 0 } else { 1 };
 
