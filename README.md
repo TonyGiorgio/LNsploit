@@ -35,7 +35,7 @@ A Lightning Network exploit toolkit built with LDK.
 
 - Possible Exploits
   - LND <v0.15.2 script [bug #7002](https://github.com/lightningnetwork/lnd/issues/7002) ✅
-  - Broadcast old revocation commitment
+  - Broadcast old revocation commitment ✅
   - Balance probe
   - Channel Jam
   - Probe for unannounced channels
