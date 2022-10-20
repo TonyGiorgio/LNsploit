@@ -725,12 +725,12 @@ impl Screen for ParentScreen {
                     self.menu_index = 0; // always reset when pressed
                     return Ok(new_action);
                 }
-                KeyCode::Up => {
+                KeyCode::Up | KeyCode::Char('k') => {
                     let next_index =
                         on_up_press_handler(self.current_menu_list.clone(), Some(self.menu_index));
                     self.menu_index = next_index;
                 }
-                KeyCode::Down => {
+                KeyCode::Down | KeyCode::Char('j') => {
                     let next_index = on_down_press_handler(
                         self.current_menu_list.clone(),
                         Some(self.menu_index),
