@@ -17,8 +17,8 @@ impl Toast {
     }
 
     pub fn tick_tock(&mut self) {
-        if (self.ticks_left > 0) {
-            self.ticks_left = self.ticks_left - 1;
+        if self.ticks_left > 0 {
+            self.ticks_left -= 1;
         }
     }
 

@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
     // config parsing
     let config_path = std::env::args()
         .nth(1)
-        .unwrap_or(String::from("config.yaml"));
+        .unwrap_or_else(|| String::from("config.yaml"));
     let config_file = std::fs::File::open(config_path)
         .expect("cannot open config file, make sure one exists or is specific");
     let config: Config =
@@ -119,12 +119,12 @@ impl Logger for FilesystemLogger {
             // precision for message-receipt information as it makes log entries a target for
             // deanonymization attacks. For testing, however, its quite useful.
             Utc::now().format("%Y-%m-%d %H:%M:%S%.3f"),
-            record.level.to_string(),
+            record.level,
             record.module_path,
             record.line,
             raw_log
         );
-        let logs_file_path = format!("{}", self.location.clone());
+        let logs_file_path = self.location.to_string();
         std::io::Write::write_all(
             &mut fs::OpenOptions::new()
                 .create(true)

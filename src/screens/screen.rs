@@ -1,8 +1,5 @@
 use super::AppEvent;
-use crate::{
-    application::{AppState, Application},
-    router::{Action, Location},
-};
+use crate::{application::AppState, router::Action};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::io::Stdout;
