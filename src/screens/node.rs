@@ -40,7 +40,7 @@ pub fn draw_node(
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)].as_ref())
         .split(chunk);
-    let text = Text::from(format!("Node Pubkey: {}", pubkey.clone()));
+    let text = Text::from(format!("Node Pubkey: {}", pubkey));
 
     let block = Paragraph::new(text)
         .style(white())
@@ -134,7 +134,7 @@ fn draw_connect_peer(
 
     frame.render_widget(outline, chunk);
 
-    let text = Text::from(format!("p2p connection string: (ctrl+v to paste it in)"));
+    let text = Text::from("p2p connection string: (ctrl+v to paste it in)");
     let help_text = Paragraph::new(text).style(white()).block(Block::default());
 
     frame.render_widget(help_text, inner_chunks[0]);
@@ -188,7 +188,7 @@ fn draw_pay_invoice(
 
     frame.render_widget(outline, chunk);
 
-    let text = Text::from(format!("bolt11 invoice: (ctrl+v to paste it in)"));
+    let text = Text::from("bolt11 invoice: (ctrl+v to paste it in)");
     let help_text = Paragraph::new(text).style(white()).block(Block::default());
 
     frame.render_widget(help_text, inner_chunks[0]);
@@ -204,11 +204,11 @@ fn draw_force_close_channel(
     frame: &mut ScreenFrame,
     chunk: Rect,
     highlight_state: (bool, bool),
-    state: &AppState,
+    _state: &AppState,
     menu_index: Option<usize>,
     channels: Vec<String>,
 ) {
-    let border_color_style = {
+    let _border_color_style = {
         if highlight_state.0 {
             yellow()
         } else if highlight_state.1 {
@@ -232,11 +232,11 @@ fn draw_open_channel(
     frame: &mut ScreenFrame,
     chunk: Rect,
     highlight_state: (bool, bool),
-    state: &AppState,
+    _state: &AppState,
     menu_index: Option<usize>,
     node_pubkeys: Vec<String>,
 ) {
-    let border_color_style = {
+    let _border_color_style = {
         if highlight_state.0 {
             yellow()
         } else if highlight_state.1 {

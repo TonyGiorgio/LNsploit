@@ -1,11 +1,11 @@
-use crate::models::{node, NodeManager};
-use crate::router::{Action, Location, Router};
+use crate::models::NodeManager;
+use crate::router::Router;
 use crate::screens::{AppEvent, InputMode, ParentScreen, Screen};
-use crate::utility::clipboard::{get_clipboard_provider, ClipboardProvider, ClipboardType};
+use crate::utility::clipboard::{get_clipboard_provider, ClipboardType};
 use crate::FilesystemLogger;
 use anyhow::{anyhow, Result};
 use bitcoincore_rpc::Client;
-use crossterm::event::{KeyEvent, KeyModifiers, ModifierKeyCode};
+use crossterm::event::{KeyEvent, KeyModifiers};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event as CEvent, KeyCode},
     execute,
@@ -257,7 +257,7 @@ impl Application {
                         "",
                         0,
                     ));
-                    return self.close().or(Err(anyhow!(err)));
+                    return self.close().map_err(|_| anyhow!(err));
                 }
             };
 
@@ -289,7 +289,7 @@ impl Application {
 
                 if event::poll(timeout).expect("poll works") {
                     if let CEvent::Key(key) = event::read().expect("can read events") {
-                        let (app_event, exit) = match (key.code, key.modifiers) {
+                        let (app_event, _exit) = match (key.code, key.modifiers) {
                             (KeyCode::Esc, _) => (AppEvent::Back, false),
                             (KeyCode::Char('q'), _) => (AppEvent::Quit, false),
                             (KeyCode::Char('c'), KeyModifiers::CONTROL) => (AppEvent::Copy, false),
@@ -304,10 +304,8 @@ impl Application {
                     }
                 }
 
-                if last_tick.elapsed() >= tick_rate {
-                    if let Ok(_) = tx.send(AppEvent::Tick) {
-                        last_tick = Instant::now();
-                    }
+                if last_tick.elapsed() >= tick_rate && tx.send(AppEvent::Tick).is_ok() {
+                    last_tick = Instant::now();
                 }
             }
         });

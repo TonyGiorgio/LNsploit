@@ -16,7 +16,6 @@ use lightning::util::logger::{Logger, Record};
 use rand_core::OsRng;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use uuid::Uuid;
 
 pub struct NodeManager {
@@ -65,19 +64,18 @@ impl NodeManager {
 
     pub async fn list_nodes(&self) -> Vec<Node> {
         let conn = &mut self.db.get().unwrap();
-        let node_list = nodes.load::<Node>(conn).expect("Error loading nodes"); // TODO do not panic
-        node_list
+        nodes.load::<Node>(conn).expect("Error loading nodes") // TODO do not panic
     }
 
     pub async fn get_node_id_by_pubkey(&self, passed_pubkey: &str) -> Option<String> {
         for node_item in self.list_nodes().await {
             if node_item.pubkey == passed_pubkey {
-                let db_id = node_item.id.clone();
+                let db_id = node_item.id;
                 return Some(db_id);
             }
         }
 
-        return None;
+        None
     }
 
     pub async fn connect_peer(
@@ -85,20 +83,19 @@ impl NodeManager {
         node_id: String,
         peer_connection_string: String,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+        let node = self.nodes.get(&node_id).expect("node is missing");
 
-        node.connect_peer(String::from(peer_connection_string))
-            .await
+        node.connect_peer(peer_connection_string).await
     }
 
     pub fn list_channels(&mut self, node_id: String) -> Vec<ChannelDetails> {
-        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+        let node = self.nodes.get(&node_id).expect("node is missing");
 
         node.list_channels()
     }
 
     pub fn list_peers(&mut self, node_id: String) -> Vec<String> {
-        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+        let node = self.nodes.get(&node_id).expect("node is missing");
 
         node.list_peers()
     }
@@ -108,7 +105,7 @@ impl NodeManager {
         node_id: String,
         amount_sat: u64,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+        let node = self.nodes.get(&node_id).expect("node is missing");
 
         node.create_invoice(amount_sat)
     }
@@ -118,7 +115,7 @@ impl NodeManager {
         node_id: String,
         invoice: String,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+        let node = self.nodes.get(&node_id).expect("node is missing");
 
         node.pay_invoice(invoice)
     }
@@ -129,7 +126,7 @@ impl NodeManager {
         peer_pubkey: String,
         amount_sat: u64,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+        let node = self.nodes.get(&node_id).expect("node is missing");
 
         node.open_channel(peer_pubkey, amount_sat).await
     }
@@ -140,7 +137,7 @@ impl NodeManager {
         channel_id: String,
         peer_pubkey: String,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+        let node = self.nodes.get(&node_id).expect("node is missing");
 
         node.close_channel(channel_id, peer_pubkey).await
     }
@@ -151,7 +148,7 @@ impl NodeManager {
         channel_id: String,
         peer_pubkey: String,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+        let node = self.nodes.get(&node_id).expect("node is missing");
 
         node.force_close_channel_with_initial_state(channel_id, peer_pubkey)
             .await
@@ -161,7 +158,7 @@ impl NodeManager {
         &mut self,
         node_id: String,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+        let node = self.nodes.get(&node_id).expect("node is missing");
 
         node.create_address()
     }
@@ -176,7 +173,7 @@ impl NodeManager {
             .order(child_index.desc())
             .load::<NodeKey>(conn)
             .expect("Error loading node keys"); // TODO do not panic
-        if node_key_list.len() > 0 {
+        if !node_key_list.is_empty() {
             next_child_index = node_key_list[0].child_index + 1;
         }
 
@@ -185,7 +182,7 @@ impl NodeManager {
             .limit(1) // right now only ever plan on having one
             .load::<MasterKey>(conn)
             .expect("Error loading master key"); // TODO do not panic
-        if master_key_list.len() < 1 {
+        if master_key_list.is_empty() {
             panic!("there is no master key loaded");
         }
         let master_key_id_ref = master_key_list[0].id.clone();
@@ -233,7 +230,7 @@ impl NodeManager {
     }
 
     fn setup_node(&mut self, node_id: String) {
-        let node = self.nodes.get(&node_id.clone()).expect("node is missing");
+        let node = self.nodes.get(&node_id).expect("node is missing");
 
         // when a new node is created, create the bitcoind wallet for it
         node.create_wallet()
@@ -272,7 +269,7 @@ impl NodeManager {
         let master_key_list = master_keys
             .load::<MasterKey>(conn)
             .expect("Error loading master keys");
-        if master_key_list.len() > 0 {
+        if !master_key_list.is_empty() {
             return;
         }
 

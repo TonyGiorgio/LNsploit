@@ -42,7 +42,7 @@ pub struct LdkBitcoindClient {
 impl LdkBitcoindClient {
     pub fn create_raw_transaction(&self, outputs: HashMap<String, Amount>) -> String {
         self.bitcoind_client
-            .create_raw_transaction_hex(&vec![], &outputs, None, None)
+            .create_raw_transaction_hex(&[], &outputs, None, None)
             .unwrap()
     }
 
@@ -80,32 +80,29 @@ impl LdkBitcoindClient {
         }
     }
 
-    pub fn get_new_address(&self, label: String) -> Result<Address, Box<dyn std::error::Error>> {
+    pub fn get_new_address(&self, _label: String) -> Result<Address, Box<dyn std::error::Error>> {
         // TODO utilize label, but for now not because polar...
         let label = String::from("");
         match self
             .bitcoind_client
-            .get_new_address(Some(String::as_str(&label.clone())), None)
+            .get_new_address(Some(String::as_str(&label)), None)
         {
             Ok(addr) => Ok(addr),
             Err(e) => Err(e.into()),
         }
     }
 
-    pub fn create_wallet(&self, label: String) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn create_wallet(&self, _label: String) -> Result<(), Box<dyn std::error::Error>> {
         // TODO utilize label, but for now not because polar...
         let label = String::from("");
-        match self.bitcoind_client.create_wallet(
-            String::as_str(&label.clone()),
-            None,
-            None,
-            None,
-            None,
-        ) {
+        match self
+            .bitcoind_client
+            .create_wallet(String::as_str(&label), None, None, None, None)
+        {
             Ok(res) => {
                 if let Some(warning) = res.warning {
-                    if warning != "" {
-                        return Err(warning.into());
+                    if !warning.is_empty() {
+                        Err(warning.into())
                     } else {
                         Ok(())
                     }
@@ -159,7 +156,7 @@ impl BlockSource for &LdkBitcoindClient {
         })
     }
 
-    fn get_best_block<'a>(&'a self) -> AsyncBlockSourceResult<(BlockHash, Option<u32>)> {
+    fn get_best_block(&self) -> AsyncBlockSourceResult<(BlockHash, Option<u32>)> {
         Box::pin(async move {
             let res = self.bitcoind_client.get_blockchain_info();
             match res {
@@ -267,7 +264,7 @@ pub fn broadcast_lnd_15_exploit(
             .push_opcode(opcodes::all::OP_DROP)
     });
     let script = script_builder.push_opcode(opcodes::OP_TRUE).into_script();
-    let tr_script = script.clone().to_v1_p2tr(&secp, internal_key);
+    let tr_script = script.to_v1_p2tr(&secp, internal_key);
     let addr = Address::from_script(&tr_script, Network::Regtest).unwrap();
 
     let amount: Amount = Amount::from_sat(110_000);

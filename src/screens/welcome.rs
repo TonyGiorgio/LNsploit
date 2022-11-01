@@ -1,8 +1,7 @@
 use tui::{
     layout::Rect,
-    style::Style,
     text::Text,
-    widgets::{Block, Borders, Paragraph, Widget, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 
 use crate::widgets::constants::white;

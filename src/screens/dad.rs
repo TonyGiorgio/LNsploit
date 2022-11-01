@@ -7,20 +7,17 @@ use super::{
 use crate::{
     application::{AppState, Toast},
     handlers::{on_down_press_handler, on_up_press_handler},
-    models::{hex_str, to_vec},
+    models::hex_str,
     router::{Action, ActiveBlock, Location, NodeSubLocation},
     widgets::draw::draw_selectable_list,
 };
 use anyhow::Result;
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
-use hex;
 use lightning::util::logger::{Logger, Record};
 use tui::{
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
-    text::Text,
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders},
 };
 
 const MAIN_MENU: [&str; 5] = [
@@ -47,7 +44,7 @@ impl ParentScreen {
         }
     }
 
-    fn handle_enter_main(&mut self, state: &mut AppState) -> Option<Action> {
+    fn handle_enter_main(&mut self, _state: &mut AppState) -> Option<Action> {
         let item = self.current_menu_list[self.menu_index].clone();
 
         let action = match String::as_str(&item) {
@@ -107,7 +104,7 @@ impl ParentScreen {
                     .list_channels(node_id)
                     .iter()
                     .map(|c| {
-                        String::from(c.counterparty.node_id.to_string())
+                        c.counterparty.node_id.to_string()
                             + ":"
                             + String::as_str(&hex_str(&c.channel_id))
                     })
@@ -386,14 +383,12 @@ impl ParentScreen {
         };
         // if the current active block is menu/nodes but active stack is something
         // else then replace back to the active stack
-        if matches!(state.router.get_active_block(), ActiveBlock::Menu)
-            || matches!(state.router.get_active_block(), ActiveBlock::Nodes)
+        if (matches!(state.router.get_active_block(), ActiveBlock::Menu)
+            || matches!(state.router.get_active_block(), ActiveBlock::Nodes))
+            && (!matches!(state.router.get_current_route(), Location::Home)
+                && !matches!(state.router.get_current_route(), Location::NodesList))
         {
-            if !matches!(state.router.get_current_route(), Location::Home)
-                && !matches!(state.router.get_current_route(), Location::NodesList)
-            {
-                return Some(Action::Replace(state.router.get_current_route().clone()));
-            }
+            return Some(Action::Replace(state.router.get_current_route().clone()));
         };
 
         // reset menu list
@@ -420,13 +415,13 @@ impl ParentScreen {
                 NodeSubLocation::PayInvoice => vec![],  // NO LIST
                 NodeSubLocation::Suicide(channels) => channels,
                 NodeSubLocation::ListChannels => vec![], // TODO
-                NodeSubLocation::OpenChannel(pubkeys) => pubkeys.clone(),
+                NodeSubLocation::OpenChannel(pubkeys) => pubkeys,
                 NodeSubLocation::NewAddress => vec![], // NO LIST
             },
             Location::NodesList => state
                 .cached_nodes_list
                 .iter()
-                .map(|x| String::from(x))
+                .map(String::from)
                 .collect::<Vec<String>>(),
             Location::Exploits => EXPLOIT_ACTION_MENU
                 .iter()
@@ -447,16 +442,15 @@ impl ParentScreen {
 
     fn handle_enter_node_list(&mut self, state: &mut AppState) -> Option<Action> {
         // if the current active block is node list then do nothing
-        match state.router.get_active_block() {
-            ActiveBlock::Nodes => return None,
-            _ => (),
-        };
+        if state.router.get_active_block() == &ActiveBlock::Nodes {
+            return None;
+        }
 
         // set menu list to node list
         self.current_menu_list = state
             .cached_nodes_list
             .iter()
-            .map(|x| String::from(x))
+            .map(String::from)
             .collect::<Vec<String>>();
 
         Some(Action::Replace(Location::NodesList))
@@ -464,10 +458,9 @@ impl ParentScreen {
 
     fn handle_enter_main_menu(&mut self, state: &mut AppState) -> Option<Action> {
         // if the current active block is node list then do nothing
-        match state.router.get_active_block() {
-            ActiveBlock::Menu => return None,
-            _ => (),
-        };
+        if state.router.get_active_block() == &ActiveBlock::Menu {
+            return None;
+        }
 
         // set menu list to menu items
         self.current_menu_list = MAIN_MENU
@@ -643,7 +636,7 @@ impl Screen for ParentScreen {
                     let new_action = self.handle_esc(state);
                     // if esc does something, always try to reset items
                     let next_location = if let Some(new_action) = new_action.clone() {
-                        match new_action.clone() {
+                        match new_action {
                             Action::Push(location) => Some(location),
                             Action::Replace(location) => Some(location),
                             Action::Pop => Some(state.router.peak_next_stack().clone()),
@@ -672,8 +665,7 @@ impl Screen for ParentScreen {
                                         lightning::util::logger::Level::Debug,
                                         format_args!(
                                             "action: {:?}, current sublocation: {:?}",
-                                            action.clone(),
-                                            sub_location.clone()
+                                            action, sub_location
                                         ),
                                         "dad",
                                         "",
@@ -682,25 +674,17 @@ impl Screen for ParentScreen {
                                     action
                                 }
                                 NodeSubLocation::ConnectPeer => {
-                                    let action =
-                                        self.handle_connect_peer_action(&pubkey, state).await;
-                                    action
+                                    self.handle_connect_peer_action(&pubkey, state).await
                                 }
                                 NodeSubLocation::PayInvoice => {
-                                    let action =
-                                        self.handle_pay_invoice_action(&pubkey, state).await;
-                                    action
+                                    self.handle_pay_invoice_action(&pubkey, state).await
                                 }
                                 NodeSubLocation::OpenChannel(_) => {
-                                    let action =
-                                        self.handle_open_channel_action(&pubkey, state).await;
-                                    action
+                                    self.handle_open_channel_action(&pubkey, state).await
                                 }
                                 NodeSubLocation::Suicide(_) => {
-                                    let action = self
-                                        .handle_force_close_prev_channel_action(&pubkey, state)
-                                        .await;
-                                    action
+                                    self.handle_force_close_prev_channel_action(&pubkey, state)
+                                        .await
                                 }
                                 NodeSubLocation::ListChannels => None,
                                 NodeSubLocation::NewAddress => None,
@@ -714,7 +698,7 @@ impl Screen for ParentScreen {
                     if let Some(new_action) = new_action.clone() {
                         self.set_list(
                             state,
-                            match new_action.clone() {
+                            match new_action {
                                 Action::Push(location) => Some(location),
                                 Action::Replace(location) => Some(location),
                                 Action::Pop => Some(state.router.peak_next_stack().clone()),

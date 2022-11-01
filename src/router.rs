@@ -1,4 +1,4 @@
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Location {
     Home,
     NodesList,
@@ -7,7 +7,7 @@ pub enum Location {
     Exploits,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NodeSubLocation {
     ActionMenu,
     ConnectPeer,
@@ -25,7 +25,7 @@ pub enum Action {
     Pop,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActiveBlock {
     NoneBlock,
     Menu,
@@ -33,7 +33,7 @@ pub enum ActiveBlock {
     Main(Location),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HoveredBlock {
     Menu,
     Nodes,
@@ -62,7 +62,7 @@ impl Router {
             Action::Push(location) => {
                 self.screen_stack.push(location.clone());
 
-                (location.clone(), location_to_active_block(location.clone()))
+                (location.clone(), location_to_active_block(location))
             }
             Action::Replace(location) => {
                 // if menu item, don't replace route, just the active block
@@ -72,12 +72,12 @@ impl Router {
                     _ => location.clone(),
                 };
 
-                (next_route, location_to_active_block(location.clone()))
+                (next_route, location_to_active_block(location))
             }
             Action::Pop => {
                 let next_location = match self.screen_stack.pop() {
                     Some(_) => {
-                        if self.screen_stack.len() == 0 {
+                        if self.screen_stack.is_empty() {
                             self.screen_stack.push(Location::Home);
                             Location::Home
                         } else {
@@ -92,7 +92,7 @@ impl Router {
 
                 (
                     next_location.clone(),
-                    location_to_active_block(next_location.clone()),
+                    location_to_active_block(next_location),
                 )
             }
         };
@@ -129,6 +129,5 @@ pub fn location_to_active_block(loc: Location) -> ActiveBlock {
         Location::Home => ActiveBlock::Menu,
         Location::NodesList => ActiveBlock::Nodes,
         Location::Exploits => ActiveBlock::Main(Location::Exploits),
-        _ => ActiveBlock::NoneBlock,
     }
 }

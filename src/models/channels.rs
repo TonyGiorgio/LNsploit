@@ -89,7 +89,7 @@ pub struct NodePersister {
 
 impl NodePersister {
     pub fn new(db: Pool<ConnectionManager<SqliteConnection>>, node_db_id: String) -> Self {
-        return Self { db, node_db_id };
+        Self { db, node_db_id }
     }
 
     pub fn read_channelmonitors<Signer: Sign, K: Deref>(
@@ -229,7 +229,7 @@ impl<ChannelSigner: Sign> chainmonitor::Persist<ChannelSigner> for NodePersister
                     channel_tx_id: String::as_str(&funding_txo_txid),
                     channel_tx_index: funding_txo.index as i32,
                     channel_monitor_data: monitor_data.clone(),
-                    original_channel_monitor_data: monitor_data.clone(),
+                    original_channel_monitor_data: monitor_data,
                 };
                 match diesel::insert_into(channel_monitors)
                     .values(&new_channel_monitor)
@@ -312,7 +312,7 @@ impl<ChannelSigner: Sign> chainmonitor::Persist<ChannelSigner> for NodePersister
             false => {
                 // save the entire monitor for block related updates
                 // this behaves exactly the same as persisting a new channel
-                return self.persist_new_channel(funding_txo, monitor, update_id);
+                self.persist_new_channel(funding_txo, monitor, update_id)
             }
         }
     }
@@ -325,7 +325,7 @@ pub struct KVNodePersister {
 
 impl KVNodePersister {
     pub fn new(db: Pool<ConnectionManager<SqliteConnection>>, node_db_id: String) -> Self {
-        return Self { db, node_db_id };
+        Self { db, node_db_id }
     }
 
     pub fn read_value(&self, key: &str) -> Result<Vec<u8>, io::Error> {
@@ -377,8 +377,8 @@ impl KVNodePersister {
         NetworkGraph::new(genesis_hash, logger)
     }
 
-    pub fn persist_network(&self, network_graph: &NetworkGraph) -> std::io::Result<()> {
-        return self.persist("network", network_graph);
+    pub fn persist_network(&self, network_graph: &NetworkGraph) -> io::Result<()> {
+        self.persist("network", network_graph)
     }
 
     pub fn read_scorer(
@@ -413,13 +413,13 @@ impl KVNodePersister {
     pub fn persist_scroer(
         &self,
         scorer: &ProbabilisticScorer<Arc<NetworkGraph>, Arc<FilesystemLogger>>,
-    ) -> std::io::Result<()> {
-        return self.persist("prob_scorer", scorer);
+    ) -> io::Result<()> {
+        self.persist("prob_scorer", scorer)
     }
 }
 
 impl KVStorePersister for KVNodePersister {
-    fn persist<W: Writeable>(&self, key: &str, object: &W) -> std::io::Result<()> {
+    fn persist<W: Writeable>(&self, key: &str, object: &W) -> io::Result<()> {
         let conn = &mut self.db.get().unwrap();
         let key_value_list = key_values
             .filter(super::schema::key_values::node_id.eq(self.node_db_id.clone()))

@@ -559,9 +559,9 @@ impl RunnableNode {
             }
         });
 
-        return Ok(RunnableNode {
-            db: db.clone(),
-            db_id: db_id.clone(),
+        Ok(RunnableNode {
+            db,
+            db_id,
             persister,
             pubkey,
             key_id,
@@ -576,15 +576,15 @@ impl RunnableNode {
             onion_messenger,
             inbound_payments,
             outbound_payments,
-            chain_monitor: chain_monitor.clone(),
-        });
+            chain_monitor,
+        })
     }
 
     pub async fn connect_peer(
         &self,
         peer_pubkey_and_ip_addr: String,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if peer_pubkey_and_ip_addr == "" {
+        if peer_pubkey_and_ip_addr.is_empty() {
             self.logger.log(&Record::new(
                     lightning::util::logger::Level::Error,
                     format_args!("ERROR: connectpeer requires peer connection info: `connectpeer pubkey@host:port`"),
@@ -709,7 +709,7 @@ impl RunnableNode {
         pubkey: String,
         amount_sat: u64,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let compressed_pubkey = to_compressed_pubkey(String::as_str(&pubkey.clone()));
+        let compressed_pubkey = to_compressed_pubkey(String::as_str(&pubkey));
         if compressed_pubkey.is_none() {
             self.logger.log(&Record::new(
                 lightning::util::logger::Level::Error,
@@ -749,7 +749,7 @@ impl RunnableNode {
                     "",
                     0,
                 ));
-                return Ok(());
+                Ok(())
             }
             Err(e) => {
                 self.logger.log(&Record::new(
@@ -762,7 +762,7 @@ impl RunnableNode {
                     "",
                     0,
                 ));
-                return Err("failed to open channel".into());
+                Err("failed to open channel".into())
             }
         }
     }
@@ -827,7 +827,7 @@ impl RunnableNode {
                     "",
                     0,
                 ));
-                return Err("failed to open channel".into());
+                Err("failed to open channel".into())
             }
         }
     }
@@ -1000,12 +1000,12 @@ impl RunnableNode {
             }
         };
 
-        let payment_hash = PaymentHash(invoice.payment_hash().clone().into_inner());
+        let payment_hash = PaymentHash(invoice.payment_hash().into_inner());
         payments.insert(
             payment_hash,
             PaymentInfo {
                 preimage: None,
-                secret: Some(invoice.payment_secret().clone()),
+                secret: Some(*invoice.payment_secret()),
                 status: HTLCStatus::Pending,
                 amt_msat: MillisatAmount(Some(amount_sat * 1000)),
             },
@@ -1072,8 +1072,8 @@ impl RunnableNode {
                 HTLCStatus::Failed
             }
         };
-        let payment_hash = PaymentHash(invoice.payment_hash().clone().into_inner());
-        let payment_secret = Some(invoice.payment_secret().clone());
+        let payment_hash = PaymentHash(invoice.payment_hash().into_inner());
+        let payment_secret = Some(*invoice.payment_secret());
 
         let mut payments = self.outbound_payments.lock().unwrap();
         payments.insert(
@@ -1160,14 +1160,14 @@ impl EventHandler for LdkEventHandler {
                 let signed_tx = self
                     .bitcoind_client
                     .sign_raw_transaction_with_wallet(funded_tx.hex);
-                assert_eq!(signed_tx.complete, true);
+                assert!(signed_tx.complete);
                 let final_tx: Transaction =
                     encode::deserialize(&to_vec(&signed_tx.hex).unwrap()).unwrap();
                 // Give the funding transaction back to LDK for opening the channel.
                 if self
                     .channel_manager
                     .funding_transaction_generated(
-                        &temporary_channel_id,
+                        temporary_channel_id,
                         counterparty_node_id,
                         final_tx,
                     )
@@ -1302,8 +1302,8 @@ impl EventHandler for LdkEventHandler {
             ));
 
                 let mut payments = self.outbound_payments.lock().unwrap();
-                if payments.contains_key(&payment_hash) {
-                    let payment = payments.get_mut(&payment_hash).unwrap();
+                if payments.contains_key(payment_hash) {
+                    let payment = payments.get_mut(payment_hash).unwrap();
                     payment.status = HTLCStatus::Failed;
                 }
             }
@@ -1395,7 +1395,7 @@ impl EventHandler for LdkEventHandler {
                     .bitcoind_client
                     .get_new_address(self.channel_manager.get_our_node_id().to_string())
                     .unwrap(); // TODO do not unwrap
-                let output_descriptors = &outputs.iter().map(|a| a).collect::<Vec<_>>();
+                let output_descriptors = &outputs.iter().collect::<Vec<_>>();
                 let tx_feerate = self
                     .bitcoind_client
                     .get_est_sat_per_1000_weight(ConfirmationTarget::Normal);
@@ -1541,7 +1541,7 @@ pub fn to_compressed_pubkey(hex: &str) -> Option<PublicKey> {
 pub(crate) fn parse_peer_info(
     peer_pubkey_and_ip_addr: String,
 ) -> Result<(PublicKey, SocketAddr), std::io::Error> {
-    let mut pubkey_and_addr = peer_pubkey_and_ip_addr.split("@");
+    let mut pubkey_and_addr = peer_pubkey_and_ip_addr.split('@');
     let pubkey = pubkey_and_addr.next();
     let peer_addr_str = pubkey_and_addr.next();
     if peer_addr_str.is_none() {
@@ -1583,8 +1583,7 @@ pub(crate) async fn connect_peer_if_necessary(
             return Ok(());
         }
     }
-    let res = do_connect_peer(pubkey, peer_addr, peer_manager).await;
-    res
+    do_connect_peer(pubkey, peer_addr, peer_manager).await
 }
 
 pub(crate) async fn do_connect_peer(
