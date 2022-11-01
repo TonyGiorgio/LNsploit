@@ -339,7 +339,7 @@ pub fn broadcast_lnd_max_witness_items_exploit(
     let tr_script = script.to_v1_p2tr(&secp, internal_key);
     let addr = Address::from_script(&tr_script, Network::Regtest).unwrap();
 
-    let amount: Amount = Amount::from_sat(110_000);
+    let amount: Amount = Amount::from_sat(1_000_000);
 
     let txid =
         bitcoind_client.send_to_address(&addr, amount, None, None, None, None, None, None)?;
@@ -379,7 +379,7 @@ pub fn broadcast_lnd_max_witness_items_exploit(
         lock_time: PackedLockTime::ZERO,
         input: vec![txin],
         output: vec![TxOut {
-            value: amount.to_sat() - 10_000,
+            value: amount.to_sat() - 150_000,
             script_pubkey: Script::new_p2pkh(&bitcoin::PubkeyHash::all_zeros()),
         }],
     };
