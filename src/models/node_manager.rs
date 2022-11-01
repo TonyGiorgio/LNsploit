@@ -2,8 +2,8 @@ use super::schema::master_keys::dsl::*;
 use super::schema::node_keys::dsl::*;
 use super::schema::nodes::dsl::*;
 use super::{
-    broadcast_lnd_15_exploit, MasterKey, NewMasterKey, NewNode, NewNodeKey, Node, NodeKey,
-    RunnableNode,
+    broadcast_lnd_15_exploit, broadcast_lnd_max_witness_items_exploit, MasterKey, NewMasterKey,
+    NewNode, NewNodeKey, Node, NodeKey, RunnableNode,
 };
 use crate::FilesystemLogger;
 use bip32::Mnemonic;
@@ -239,6 +239,33 @@ impl NodeManager {
 
     pub fn broadcast_lnd_15_exploit(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match broadcast_lnd_15_exploit(self.bitcoind_client.clone()) {
+            Ok(txid) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!("broadcasted id: {}", txid),
+                    "node",
+                    "",
+                    0,
+                ));
+                Ok(())
+            }
+            Err(e) => {
+                self.logger.log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("could not broadcast exploit : {}", e),
+                    "node",
+                    "",
+                    0,
+                ));
+                Err(e)
+            }
+        }
+    }
+
+    pub fn broadcast_lnd_max_witness_items_exploit(
+        &mut self,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match broadcast_lnd_max_witness_items_exploit(self.bitcoind_client.clone()) {
             Ok(txid) => {
                 self.logger.log(&Record::new(
                     lightning::util::logger::Level::Info,
