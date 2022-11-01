@@ -368,6 +368,37 @@ impl ParentScreen {
                 }
                 None
             }
+            1 => {
+                // Broadcast LND tx
+                match state
+                    .node_manager
+                    .lock()
+                    .await
+                    .broadcast_lnd_max_witness_items_exploit()
+                {
+                    Ok(_) => {
+                        state.toast = Some(Toast::new("Broadcast transaction!", true));
+                        state.logger.clone().log(&Record::new(
+                            lightning::util::logger::Level::Debug,
+                            format_args!("broadcasted tx!"),
+                            "dad",
+                            "",
+                            334,
+                        ));
+                    }
+                    Err(e) => {
+                        state.toast = Some(Toast::new("Failed to broadcast transaction", false));
+                        state.logger.clone().log(&Record::new(
+                            lightning::util::logger::Level::Debug,
+                            format_args!("failure to broadcast tx: {}", e),
+                            "dad",
+                            "",
+                            334,
+                        ));
+                    }
+                }
+                None
+            }
             _ => return None,
         };
 
