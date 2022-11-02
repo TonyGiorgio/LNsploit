@@ -369,7 +369,6 @@ impl ParentScreen {
                 None
             }
             1 => {
-                // Broadcast LND tx
                 match state
                     .node_manager
                     .lock()
@@ -377,20 +376,20 @@ impl ParentScreen {
                     .broadcast_lnd_max_witness_items_exploit()
                 {
                     Ok(_) => {
-                        state.toast = Some(Toast::new("Broadcast transaction!", true));
+                        state.toast = Some(Toast::new("Malicious block mined!", true));
                         state.logger.clone().log(&Record::new(
                             lightning::util::logger::Level::Debug,
-                            format_args!("broadcasted tx!"),
+                            format_args!("malicious block mined!"),
                             "dad",
                             "",
                             334,
                         ));
                     }
                     Err(e) => {
-                        state.toast = Some(Toast::new("Failed to broadcast transaction", false));
+                        state.toast = Some(Toast::new("Failed to mine malicious block", false));
                         state.logger.clone().log(&Record::new(
                             lightning::util::logger::Level::Debug,
-                            format_args!("failure to broadcast tx: {}", e),
+                            format_args!("failure to to mine malicious block: {}", e),
                             "dad",
                             "",
                             334,
