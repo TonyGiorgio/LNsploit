@@ -294,6 +294,7 @@ impl Application {
                             (KeyCode::Char('q'), _) => (AppEvent::Quit, false),
                             (KeyCode::Char('c'), KeyModifiers::CONTROL) => (AppEvent::Copy, false),
                             (KeyCode::Char('v'), KeyModifiers::CONTROL) => (AppEvent::Paste, false),
+                            (KeyCode::Insert, KeyModifiers::SHIFT) => (AppEvent::Paste, false),
                             _ => (AppEvent::Input(key), false),
                         };
                         tx.send(app_event).expect("can send events");
