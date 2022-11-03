@@ -356,14 +356,7 @@ impl KVNodePersister {
         logger: Arc<FilesystemLogger>,
     ) -> NetworkGraph {
         let (already_init, kv_value) = match self.read_value("network") {
-            Ok(kv_value) => {
-                // check if kv value is filled or not
-                if kv_value.is_empty() {
-                    (false, vec![])
-                } else {
-                    (true, kv_value)
-                }
-            }
+            Ok(kv_value) => (!kv_value.is_empty(), kv_value),
             Err(_) => (false, vec![]),
         };
 
@@ -388,14 +381,7 @@ impl KVNodePersister {
     ) -> ProbabilisticScorer<Arc<NetworkGraph>, Arc<FilesystemLogger>> {
         let params = ProbabilisticScoringParameters::default();
         let (already_init, kv_value) = match self.read_value("prob_scorer") {
-            Ok(kv_value) => {
-                // check if kv value is filled or not
-                if kv_value.is_empty() {
-                    (false, vec![])
-                } else {
-                    (true, kv_value)
-                }
-            }
+            Ok(kv_value) => (!kv_value.is_empty(), kv_value),
             Err(_) => (false, vec![]),
         };
 
