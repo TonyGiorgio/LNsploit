@@ -698,18 +698,18 @@ dependencies = [
 
 [[package]]
 name = "lightning"
-version = "0.0.111"
+version = "0.0.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d86c207bcbca1c9dfb3668b81e2ad35b81370e583f2f8c5ee642a9f07925b05e"
+checksum = "90a0f2155316f1570446a0447c993480673f840748c8ed25bbc59dfc442ac770"
 dependencies = [
  "bitcoin",
 ]
 
 [[package]]
 name = "lightning-background-processor"
-version = "0.0.111"
+version = "0.0.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0dfef23242b3656fa54a050b5cc4f1f7938d27cbf940c6c9e5b9a08f198f8d86"
+checksum = "398b68a96cceb3c1227504bd5faeb74f26c3233447bc10cc1cb2c67e01b51556"
 dependencies = [
  "bitcoin",
  "lightning",
@@ -718,25 +718,24 @@ dependencies = [
 
 [[package]]
 name = "lightning-block-sync"
-version = "0.0.111"
+version = "0.0.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d1bb816be90f9b182627822ba3ed0b68cbf29315228fe54e4436fe5ad12df25"
+checksum = "d94c276dbe2a777d58ed6ececca96006247a4717c00ac4cdfff62d76852be783"
 dependencies = [
  "bitcoin",
  "chunked_transfer",
- "futures",
  "lightning",
- "serde",
  "serde_json",
 ]
 
 [[package]]
 name = "lightning-invoice"
-version = "0.19.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "023d5bd83191e13281b877526efb503a96aaae7ef97c7ba6359ba73f9c1bee11"
+checksum = "1788c0158526ec27a502043c2911ea6ea58fdc656bdf8749484942c07b790d23"
 dependencies = [
  "bech32 0.9.1",
+ "bitcoin",
  "bitcoin_hashes",
  "lightning",
  "num-traits",
@@ -745,9 +744,9 @@ dependencies = [
 
 [[package]]
 name = "lightning-net-tokio"
-version = "0.0.111"
+version = "0.0.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ce3c24e8e3d2c34ec503d3a0f76c07b0f4815705737a6a739058638c774580a"
+checksum = "366c0ae225736cbc03555bd5fb4b44b2e8fe2ca3c868ec53a4b325c38b2ab2bd"
 dependencies = [
  "bitcoin",
  "lightning",
@@ -756,9 +755,9 @@ dependencies = [
 
 [[package]]
 name = "lightning-rapid-gossip-sync"
-version = "0.0.111"
+version = "0.0.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff55ab0918a12e5eecf511a0ae924340361dd64213139af689da51c0759f59b8"
+checksum = "8a07af5814234924e623bca499e003fca1864024d5bd984e752230f73a131584"
 dependencies = [
  "bitcoin",
  "lightning",

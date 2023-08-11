@@ -1,5 +1,5 @@
-use bitcoin::blockdata::block::Block;
 use bitcoin::blockdata::opcodes;
+use bitcoin::blockdata::opcodes::all::OP_PUSHBYTES_0;
 use bitcoin::blockdata::script::Builder;
 use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::hash_types::BlockHash;
@@ -17,13 +17,13 @@ use bitcoincore_rpc::Client;
 use bitcoincore_rpc::RpcApi;
 use hex;
 use lightning::chain::chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator};
+use lightning::routing::utxo::{UtxoLookup, UtxoLookupError, UtxoResult};
 use lightning_block_sync::{
-    AsyncBlockSourceResult, BlockHeaderData, BlockSource, BlockSourceError,
+    AsyncBlockSourceResult, BlockData, BlockHeaderData, BlockSource, BlockSourceError,
 };
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use bitcoin::blockdata::opcodes::all::OP_PUSHBYTES_0;
 
 pub struct FundedTx {
     pub changepos: i64,
@@ -146,11 +146,14 @@ impl BlockSource for &LdkBitcoindClient {
         })
     }
 
-    fn get_block<'a>(&'a self, header_hash: &'a BlockHash) -> AsyncBlockSourceResult<'a, Block> {
+    fn get_block<'a>(
+        &'a self,
+        header_hash: &'a BlockHash,
+    ) -> AsyncBlockSourceResult<'a, BlockData> {
         Box::pin(async move {
             let res = self.bitcoind_client.get_block(header_hash);
             match res {
-                Ok(res) => Ok(res),
+                Ok(res) => Ok(BlockData::FullBlock(res)),
                 // TODO verify error type
                 Err(e) => Err(BlockSourceError::transient(e)),
             }
@@ -174,6 +177,21 @@ const MIN_FEERATE: u32 = 253 * 4;
 impl FeeEstimator for LdkBitcoindClient {
     fn get_est_sat_per_1000_weight(&self, confirmation_target: ConfirmationTarget) -> u32 {
         match confirmation_target {
+            ConfirmationTarget::MempoolMinimum => {
+                let res = self
+                    .bitcoind_client
+                    .estimate_smart_fee(1008, Some(EstimateMode::Economical));
+                match res {
+                    Ok(res) => {
+                        if let Some(fee_rate) = res.fee_rate {
+                            std::cmp::max(MIN_FEERATE, (fee_rate.to_sat()) as u32)
+                        } else {
+                            MIN_FEERATE
+                        }
+                    }
+                    Err(_) => MIN_FEERATE,
+                }
+            }
             ConfirmationTarget::Background => {
                 let res = self
                     .bitcoind_client
@@ -228,25 +246,33 @@ impl FeeEstimator for LdkBitcoindClient {
 }
 
 impl BroadcasterInterface for LdkBitcoindClient {
-    fn broadcast_transaction(&self, tx: &Transaction) {
-        let res = self.bitcoind_client.send_raw_transaction(tx);
-        // This may error due to RL calling `broadcast_transaction` with the same transaction
-        // multiple times, but the error is safe to ignore.
-        match res {
-            Ok(_) => {}
-            Err(e) => {
-                let err_str = e.to_string();
-                if !err_str.contains("Transaction already in block chain")
-                    && !err_str.contains("Inputs missing or spent")
-                    && !err_str.contains("bad-txns-inputs-missingorspent")
-                    && !err_str.contains("txn-mempool-conflict")
-                    && !err_str.contains("non-BIP68-final")
-                    && !err_str.contains("insufficient fee, rejecting replacement ")
-                {
-                    panic!("{}", e);
+    fn broadcast_transactions(&self, txs: &[&Transaction]) {
+        for tx in txs {
+            let res = self.bitcoind_client.send_raw_transaction(*tx);
+            // This may error due to RL calling `broadcast_transaction` with the same transaction
+            // multiple times, but the error is safe to ignore.
+            match res {
+                Ok(_) => {}
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if !err_str.contains("Transaction already in block chain")
+                        && !err_str.contains("Inputs missing or spent")
+                        && !err_str.contains("bad-txns-inputs-missingorspent")
+                        && !err_str.contains("txn-mempool-conflict")
+                        && !err_str.contains("non-BIP68-final")
+                        && !err_str.contains("insufficient fee, rejecting replacement ")
+                    {
+                        panic!("{}", e);
+                    }
                 }
             }
         }
+    }
+}
+
+impl UtxoLookup for LdkBitcoindClient {
+    fn get_utxo(&self, _genesis_hash: &BlockHash, _short_channel_id: u64) -> UtxoResult {
+        UtxoResult::Sync(Err(UtxoLookupError::UnknownTx))
     }
 }
 
@@ -332,7 +358,9 @@ pub fn broadcast_lnd_max_witness_items_exploit(
     let dummy_script = Script::new_p2pkh(&bitcoin::PubkeyHash::all_zeros());
     let dummy_addr = Address::from_script(&dummy_script, Network::Regtest).unwrap();
 
-    let script = Builder::new().push_opcode(opcodes::all::OP_RESERVED).into_script();
+    let script = Builder::new()
+        .push_opcode(opcodes::all::OP_RESERVED)
+        .into_script();
     let tr_script = script.to_v1_p2tr(&secp, internal_key);
     let addr = Address::from_script(&tr_script, Network::Regtest).unwrap();
 
