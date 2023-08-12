@@ -6,14 +6,14 @@ use super::{NetworkGraph, RunnableChannelManager};
 use crate::FilesystemLogger;
 use bitcoin::hash_types::{BlockHash, Txid};
 use bitcoin::hashes::hex::{FromHex, ToHex};
+use bitcoin::Network;
 use diesel::{prelude::*, r2d2::ConnectionManager, r2d2::Pool};
-use lightning::chain::chainmonitor;
 use lightning::chain::channelmonitor;
 use lightning::chain::channelmonitor::ChannelMonitorUpdate;
-use lightning::chain::keysinterface::{KeysInterface, Sign};
 use lightning::chain::transaction::OutPoint;
-use lightning::chain::ChannelMonitorUpdateErr;
-use lightning::routing::scoring::{ProbabilisticScorer, ProbabilisticScoringParameters};
+use lightning::chain::{chainmonitor, ChannelMonitorUpdateStatus};
+use lightning::routing::scoring::{ProbabilisticScorer, ProbabilisticScoringDecayParameters};
+use lightning::sign::{EntropySource, SignerProvider, WriteableEcdsaChannelSigner};
 use lightning::util::persist::KVStorePersister;
 use lightning::util::ser::{Readable, ReadableArgs, Writeable, Writer};
 use std::collections::HashMap;
@@ -92,13 +92,13 @@ impl NodePersister {
         Self { db, node_db_id }
     }
 
-    pub fn read_channelmonitors<Signer: Sign, K: Deref>(
+    pub fn read_channelmonitors<Signer: WriteableEcdsaChannelSigner, K: Deref>(
         &self,
         keys_manager: K,
         original: bool,
     ) -> Result<Vec<(BlockHash, channelmonitor::ChannelMonitor<Signer>)>, std::io::Error>
     where
-        K::Target: KeysInterface<Signer = Signer> + Sized,
+        K::Target: SignerProvider<Signer = Signer> + EntropySource + Sized,
     {
         let conn = &mut self.db.get().unwrap();
         let mut res = Vec::new();
@@ -126,7 +126,7 @@ impl NodePersister {
             let mut buffer = Cursor::new(&contents);
             match <(BlockHash, channelmonitor::ChannelMonitor<Signer>)>::read(
                 &mut buffer,
-                &*keys_manager,
+                (&*keys_manager, &*keys_manager),
             ) {
                 Ok((blockhash, channel_monitor)) => {
                     if channel_monitor.get_funding_txo().0.txid != txid.unwrap()
@@ -197,13 +197,15 @@ impl NodePersister {
     }
 }
 
-impl<ChannelSigner: Sign> chainmonitor::Persist<ChannelSigner> for NodePersister {
+impl<ChannelSigner: WriteableEcdsaChannelSigner> chainmonitor::Persist<ChannelSigner>
+    for NodePersister
+{
     fn persist_new_channel(
         &self,
         funding_txo: OutPoint,
         monitor: &channelmonitor::ChannelMonitor<ChannelSigner>,
         _update_id: chainmonitor::MonitorUpdateId,
-    ) -> Result<(), ChannelMonitorUpdateErr> {
+    ) -> ChannelMonitorUpdateStatus {
         // save channel to SQL table
         // node_db_id, funding txid, funding index, monitor data
 
@@ -235,8 +237,8 @@ impl<ChannelSigner: Sign> chainmonitor::Persist<ChannelSigner> for NodePersister
                     .values(&new_channel_monitor)
                     .execute(conn)
                 {
-                    Ok(_) => (),
-                    Err(_) => return Err(ChannelMonitorUpdateErr::PermanentFailure),
+                    Ok(_) => ChannelMonitorUpdateStatus::Completed,
+                    Err(_) => return ChannelMonitorUpdateStatus::PermanentFailure,
                 }
             }
             1 => {
@@ -253,11 +255,11 @@ impl<ChannelSigner: Sign> chainmonitor::Persist<ChannelSigner> for NodePersister
                     .set(channel_monitor_data.eq(monitor_data))
                     .execute(conn)
                 {
-                    Ok(_) => (),
-                    Err(_) => return Err(ChannelMonitorUpdateErr::PermanentFailure),
+                    Ok(_) => ChannelMonitorUpdateStatus::Completed,
+                    Err(_) => return ChannelMonitorUpdateStatus::PermanentFailure,
                 }
             }
-            _ => return Err(ChannelMonitorUpdateErr::PermanentFailure),
+            _ => return ChannelMonitorUpdateStatus::PermanentFailure,
         };
 
         // anytime monitor data is written, delete the temp update data
@@ -271,18 +273,18 @@ impl<ChannelSigner: Sign> chainmonitor::Persist<ChannelSigner> for NodePersister
         )
         .execute(conn)
         {
-            Ok(_) => Ok(()),
-            Err(_) => Err(ChannelMonitorUpdateErr::PermanentFailure),
+            Ok(_) => ChannelMonitorUpdateStatus::Completed,
+            Err(_) => ChannelMonitorUpdateStatus::PermanentFailure,
         }
     }
 
     fn update_persisted_channel(
         &self,
         funding_txo: OutPoint,
-        update: &Option<ChannelMonitorUpdate>,
+        update: Option<&ChannelMonitorUpdate>,
         monitor: &channelmonitor::ChannelMonitor<ChannelSigner>,
         update_id: chainmonitor::MonitorUpdateId,
-    ) -> Result<(), ChannelMonitorUpdateErr> {
+    ) -> ChannelMonitorUpdateStatus {
         match update.is_some() {
             true => {
                 // save just the update into its own table
@@ -305,8 +307,8 @@ impl<ChannelSigner: Sign> chainmonitor::Persist<ChannelSigner> for NodePersister
                     .values(&new_channel_update)
                     .execute(conn)
                 {
-                    Ok(_) => Ok(()),
-                    Err(_) => Err(ChannelMonitorUpdateErr::PermanentFailure),
+                    Ok(_) => ChannelMonitorUpdateStatus::Completed,
+                    Err(_) => ChannelMonitorUpdateStatus::PermanentFailure,
                 }
             }
             false => {
@@ -350,11 +352,7 @@ impl KVNodePersister {
         }
     }
 
-    pub fn read_network(
-        &self,
-        genesis_hash: BlockHash,
-        logger: Arc<FilesystemLogger>,
-    ) -> NetworkGraph {
+    pub fn read_network(&self, network: Network, logger: Arc<FilesystemLogger>) -> NetworkGraph {
         let (already_init, kv_value) = match self.read_value("network") {
             Ok(kv_value) => (!kv_value.is_empty(), kv_value),
             Err(_) => (false, vec![]),
@@ -367,11 +365,7 @@ impl KVNodePersister {
                 return graph;
             }
         }
-        NetworkGraph::new(genesis_hash, logger)
-    }
-
-    pub fn persist_network(&self, network_graph: &NetworkGraph) -> io::Result<()> {
-        self.persist("network", network_graph)
+        NetworkGraph::new(network, logger)
     }
 
     pub fn read_scorer(
@@ -379,7 +373,7 @@ impl KVNodePersister {
         graph: Arc<NetworkGraph>,
         logger: Arc<FilesystemLogger>,
     ) -> ProbabilisticScorer<Arc<NetworkGraph>, Arc<FilesystemLogger>> {
-        let params = ProbabilisticScoringParameters::default();
+        let params = ProbabilisticScoringDecayParameters::default();
         let (already_init, kv_value) = match self.read_value("prob_scorer") {
             Ok(kv_value) => (!kv_value.is_empty(), kv_value),
             Err(_) => (false, vec![]),
@@ -394,13 +388,6 @@ impl KVNodePersister {
             }
         }
         ProbabilisticScorer::new(params, graph, logger)
-    }
-
-    pub fn persist_scroer(
-        &self,
-        scorer: &ProbabilisticScorer<Arc<NetworkGraph>, Arc<FilesystemLogger>>,
-    ) -> io::Result<()> {
-        self.persist("prob_scorer", scorer)
     }
 }
 
@@ -474,7 +461,7 @@ impl DiskWriteable for RunnableChannelManager {
     }
 }
 
-impl<Signer: Sign> DiskWriteable for channelmonitor::ChannelMonitor<Signer> {
+impl<Signer: WriteableEcdsaChannelSigner> DiskWriteable for channelmonitor::ChannelMonitor<Signer> {
     fn write_to_memory<W: Writer>(&self, writer: &mut W) -> Result<(), std::io::Error> {
         self.write(writer)
     }

@@ -4,7 +4,6 @@ use super::schema::nodes;
 use super::{KVNodePersister, LdkBitcoindClient, MasterKey, NodeKey, NodePersister};
 use crate::FilesystemLogger;
 use bip32::{Mnemonic, XPrv};
-use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::consensus::encode;
 use bitcoin::hash_types::BlockHash;
@@ -17,28 +16,28 @@ use bitcoin_bech32::WitnessProgram;
 use bitcoincore_rpc::{Client, RpcApi};
 use diesel::{prelude::*, r2d2::ConnectionManager, r2d2::Pool};
 use lightning::chain::chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator};
-use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager, Recipient};
 use lightning::chain::{self, Filter, Watch};
 use lightning::chain::{chainmonitor, BestBlock};
+use lightning::events::{Event, EventHandler, PaymentPurpose};
+use lightning::ln::channelmanager::Retry::Timeout;
 use lightning::ln::channelmanager::{self, ChannelDetails, ChannelManagerReadArgs};
 use lightning::ln::channelmanager::{ChainParameters, SimpleArcChannelManager};
 use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, SimpleArcPeerManager};
 use lightning::ln::{PaymentHash, PaymentPreimage, PaymentSecret};
-use lightning::onion_message::SimpleArcOnionMessenger;
+use lightning::onion_message::{DefaultMessageRouter, SimpleArcOnionMessenger};
 use lightning::routing::gossip::{self, NodeId, P2PGossipSync};
-use lightning::routing::scoring::ProbabilisticScorer;
+use lightning::routing::router::DefaultRouter;
+use lightning::routing::scoring::{ProbabilisticScorer, ProbabilisticScoringFeeParameters};
+use lightning::sign::{EntropySource, InMemorySigner, KeysManager, NodeSigner, Recipient};
 use lightning::util::config::{ChannelHandshakeConfig, ChannelHandshakeLimits, UserConfig};
-use lightning::util::events::{Event, EventHandler, PaymentPurpose};
 use lightning::util::logger::{Logger, Record};
 use lightning::util::ser::ReadableArgs;
 use lightning_background_processor::{BackgroundProcessor, GossipSync};
 use lightning_block_sync::init;
 use lightning_block_sync::SpvClient;
 use lightning_block_sync::{poll, UnboundedCache};
-use lightning_invoice::payment;
-use lightning_invoice::payment::PaymentError;
-use lightning_invoice::utils::DefaultRouter;
-use lightning_invoice::{utils, Currency, Invoice};
+use lightning_invoice::payment::{pay_invoice, PaymentError};
+use lightning_invoice::{utils, Bolt11Invoice, Currency};
 use lightning_net_tokio::SocketDescriptor;
 use rand::Rng;
 use std::collections::hash_map::Entry;
@@ -77,7 +76,6 @@ pub struct RunnableNode {
     pub persister: Arc<NodePersister>,
     pub ldk_bitcoind_client: Arc<LdkBitcoindClient>,
     pub logger: Arc<FilesystemLogger>,
-    pub invoice_payer: Arc<InvoicePayer<LdkEventHandler>>,
     pub peer_manager: Arc<PeerManager>,
     pub channel_manager: Arc<RunnableChannelManager>,
     pub network_graph: Arc<NetworkGraph>,
@@ -134,10 +132,10 @@ impl RunnableNode {
         let mut secp_ctx = Secp256k1::new();
         let keys_manager_clone = keys_manager.clone();
         secp_ctx.seeded_randomize(&keys_manager_clone.get_secure_random_bytes());
-        let our_network_key = keys_manager_clone
-            .get_node_secret(Recipient::Node)
-            .expect("cannot parse node secret");
-        let pubkey = PublicKey::from_secret_key(&secp_ctx, &our_network_key).to_string();
+        let pubkey = keys_manager_clone
+            .get_node_id(Recipient::Node)
+            .expect("cannot parse node secret")
+            .to_string();
 
         logger.log(&Record::new(
             lightning::util::logger::Level::Info,
@@ -216,6 +214,27 @@ impl RunnableNode {
             }
         }
 
+        // initialize network graph
+        let network_graph = Arc::new(kv_persister.read_network(Network::Regtest, logger.clone()));
+
+        // initialize scorer
+        let scorer = Arc::new(Mutex::new(
+            kv_persister.read_scorer(Arc::clone(&network_graph), logger.clone()),
+        ));
+
+        let router = Arc::new(DefaultRouter::new(
+            network_graph.clone(),
+            logger.clone(),
+            keys_manager.get_secure_random_bytes(),
+            scorer.clone(),
+            ProbabilisticScoringFeeParameters::default(),
+        ));
+
+        let current_time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
         // init the channel manager
 
         let mut user_config = UserConfig::default();
@@ -243,9 +262,12 @@ impl RunnableNode {
                 }
                 let read_args = ChannelManagerReadArgs::new(
                     keys_manager.clone(),
+                    keys_manager.clone(),
+                    keys_manager.clone(),
                     fee_estimator.clone(),
                     chain_monitor.clone(),
                     broadcaster.clone(),
+                    router.clone(),
                     logger.clone(),
                     user_config,
                     channel_monitor_mut_references,
@@ -272,10 +294,14 @@ impl RunnableNode {
                     fee_estimator.clone(),
                     chain_monitor.clone(),
                     broadcaster.clone(),
+                    router.clone(),
                     logger.clone(),
+                    keys_manager.clone(),
+                    keys_manager.clone(),
                     keys_manager.clone(),
                     user_config,
                     chain_params,
+                    current_time as u32,
                 );
                 (getinfo_resp.best_block_hash, fresh_channel_manager)
             }
@@ -335,64 +361,40 @@ impl RunnableNode {
             let funding_outpoint = item.2;
             chain_monitor
                 .clone()
-                .watch_channel(funding_outpoint, channel_monitor)
-                .unwrap();
+                .watch_channel(funding_outpoint, channel_monitor);
         }
-
-        // initialize network graph
-        let genesis = genesis_block(bitcoin::Network::Regtest).header.block_hash();
-        let kv_persister_network_graph = kv_persister.clone();
-        let network_graph =
-            Arc::new(kv_persister_network_graph.read_network(genesis, logger.clone()));
 
         let gossip_sync = Arc::new(P2PGossipSync::new(
             Arc::clone(&network_graph),
-            None::<Arc<dyn chain::Access + Send + Sync>>,
+            None::<Arc<LdkBitcoindClient>>,
             logger.clone(),
         ));
-        let network_graph_persist = Arc::clone(&network_graph);
-        let network_graph_logger = logger.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(600));
-            loop {
-                interval.tick().await;
-                let res = kv_persister_network_graph.persist_network(&network_graph_persist);
-                if res.is_err() {
-                    // Persistence errors here are non-fatal as we can just fetch the routing graph
-                    // again later, but they may indicate a disk error which could be fatal elsewhere.
-                    network_graph_logger.log(&Record::new(
-                        lightning::util::logger::Level::Error,
-                        format_args!("Failed to persist network graph to DB"),
-                        "node",
-                        "",
-                        0,
-                    ));
-                }
-            }
-        });
 
         // initialize peer manager
         let channel_manager: Arc<RunnableChannelManager> = Arc::new(channel_manager);
-        let onion_messenger: Arc<OnionMessenger> =
-            Arc::new(OnionMessenger::new(keys_manager.clone(), logger.clone()));
+        let onion_messenger: Arc<OnionMessenger> = Arc::new(OnionMessenger::new(
+            keys_manager.clone(),
+            keys_manager.clone(),
+            logger.clone(),
+            Arc::new(DefaultMessageRouter {}),
+            IgnoringMessageHandler {},
+            IgnoringMessageHandler {},
+        ));
         let mut ephemeral_bytes = [0; 32];
-        let current_time = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+
         rand::thread_rng().fill_bytes(&mut ephemeral_bytes);
         let lightning_msg_handler = MessageHandler {
             chan_handler: channel_manager.clone(),
             route_handler: gossip_sync.clone(),
             onion_message_handler: onion_messenger.clone(),
+            custom_message_handler: IgnoringMessageHandler {},
         };
         let peer_manager: Arc<PeerManager> = Arc::new(PeerManager::new(
             lightning_msg_handler,
-            keys_manager.get_node_secret(Recipient::Node).unwrap(),
-            current_time,
+            current_time as u32,
             &ephemeral_bytes,
             logger.clone(),
-            IgnoringMessageHandler {},
+            keys_manager.clone(),
         ));
 
         // init networking
@@ -458,7 +460,7 @@ impl RunnableNode {
         let event_handler_bitcoind = ldk_bitcoind_client.clone();
         let network_graph_events = network_graph.clone();
         let event_handler_logger = logger.clone();
-        let event_handler = LdkEventHandler::new(
+        let event_handler = Arc::new(LdkEventHandler::new(
             channel_manager_event_listener,
             event_handler_bitcoind,
             network_graph_events,
@@ -467,54 +469,10 @@ impl RunnableNode {
             outbound_pmts_for_events,
             network,
             event_handler_logger,
-        );
-
-        // init routing scorer
-        let kv_persister_scorer = kv_persister.clone();
-        let scorer = Arc::new(Mutex::new(
-            kv_persister_scorer.read_scorer(Arc::clone(&network_graph), logger.clone()),
-        ));
-        let scorer_persist = Arc::clone(&scorer);
-        let scorer_logger = logger.clone();
-        // TODO consider moving this to the background runner
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(600));
-            loop {
-                interval.tick().await;
-                let locked_scorer_persist = scorer_persist.lock().unwrap();
-                let res = kv_persister_scorer.persist_scroer(&locked_scorer_persist);
-                if res.is_err() {
-                    // Persistence errors here are non-fatal as we can just fetch the routing graph
-                    // again later, but they may indicate a disk error which could be fatal elsewhere.
-                    scorer_logger.log(&Record::new(
-                        lightning::util::logger::Level::Error,
-                        format_args!("Failed to persist scorer to DB"),
-                        "node",
-                        "",
-                        0,
-                    ));
-                }
-            }
-        });
-
-        // create invoice payer
-        let router = DefaultRouter::new(
-            network_graph.clone(),
-            logger.clone(),
-            keys_manager.get_secure_random_bytes(),
-        );
-        let invoice_payer = Arc::new(InvoicePayer::new(
-            channel_manager.clone(),
-            router,
-            scorer.clone(),
-            logger.clone(),
-            event_handler,
-            payment::Retry::Timeout(Duration::from_secs(0)), // No ever trying to retry payments
         ));
 
         let background_processor_logger = logger.clone();
         let background_processor_pubkey = pubkey.clone();
-        let background_processor_invoice_payer = invoice_payer.clone();
         let background_processor_peer_manager = peer_manager.clone();
         let background_processor_channel_manager = channel_manager.clone();
         let background_chain_monitor = chain_monitor.clone();
@@ -532,7 +490,7 @@ impl RunnableNode {
 
             let _background_processor = BackgroundProcessor::start(
                 kv_persister,
-                background_processor_invoice_payer.clone(),
+                event_handler.clone(),
                 background_chain_monitor.clone(),
                 background_processor_channel_manager.clone(),
                 GossipSync::p2p(gossip_sync.clone()),
@@ -569,7 +527,6 @@ impl RunnableNode {
             keys_manager,
             ldk_bitcoind_client,
             logger,
-            invoice_payer,
             peer_manager,
             channel_manager,
             network_graph,
@@ -700,7 +657,7 @@ impl RunnableNode {
         self.peer_manager
             .get_peer_node_ids()
             .iter()
-            .map(|p| p.to_string())
+            .map(|p| p.0.to_string())
             .collect::<Vec<String>>()
     }
 
@@ -841,7 +798,10 @@ impl RunnableNode {
         // initial data of each channel
         let original_channel_monitor = self
             .persister
-            .read_channelmonitors(self.keys_manager.clone(), true)
+            .read_channelmonitors::<InMemorySigner, Arc<KeysManager>>(
+                self.keys_manager.clone(),
+                true,
+            )
             .unwrap();
 
         // now proceed with force close logic
@@ -908,15 +868,15 @@ impl RunnableNode {
                         } => total_balance += claimable_amount_satoshis,
                         chain::channelmonitor::Balance::ContentiousClaimable {
                             claimable_amount_satoshis,
-                            timeout_height: _,
+                            ..
                         } => total_balance += claimable_amount_satoshis,
                         chain::channelmonitor::Balance::MaybeTimeoutClaimableHTLC {
                             claimable_amount_satoshis,
-                            claimable_height: _,
+                            ..
                         } => total_balance += claimable_amount_satoshis,
                         chain::channelmonitor::Balance::MaybePreimageClaimableHTLC {
                             claimable_amount_satoshis,
-                            expiry_height: _,
+                            ..
                         } => total_balance += claimable_amount_satoshis,
                         chain::channelmonitor::Balance::CounterpartyRevokedOutputClaimable {
                             claimable_amount_satoshis,
@@ -948,7 +908,7 @@ impl RunnableNode {
                         "",
                         0,
                     ));
-                    self.ldk_bitcoind_client.broadcast_transaction(&old_tx);
+                    self.ldk_bitcoind_client.broadcast_transactions(&[&old_tx]);
                 }
             }
         }
@@ -973,10 +933,12 @@ impl RunnableNode {
         let invoice = match utils::create_invoice_from_channelmanager(
             &self.channel_manager,
             self.keys_manager.clone(),
+            self.logger.clone(),
             currency,
             Some(amount_sat * 1000),
             "lnsploit".to_string(),
             1500,
+            None,
         ) {
             Ok(inv) => {
                 self.logger.log(&Record::new(
@@ -1014,7 +976,7 @@ impl RunnableNode {
     }
 
     pub fn pay_invoice(&self, invoice_str: String) -> Result<(), Box<dyn std::error::Error>> {
-        let invoice = match Invoice::from_str(&invoice_str) {
+        let invoice = match Bolt11Invoice::from_str(&invoice_str) {
             Ok(inv) => inv,
             Err(e) => {
                 self.logger.log(&Record::new(
@@ -1028,7 +990,11 @@ impl RunnableNode {
             }
         };
 
-        let status = match self.invoice_payer.pay_invoice(&invoice) {
+        let status = match pay_invoice(
+            &invoice,
+            Timeout(Duration::from_secs(0)),
+            &self.channel_manager,
+        ) {
             Ok(_payment_id) => {
                 let payee_pubkey = invoice.recover_payee_pub_key();
                 let amt_msat = invoice.amount_milli_satoshis().unwrap();
@@ -1050,16 +1016,6 @@ impl RunnableNode {
                     0,
                 ));
                 return Err("invalid invoice".into());
-            }
-            Err(PaymentError::Routing(e)) => {
-                self.logger.log(&Record::new(
-                    lightning::util::logger::Level::Error,
-                    format_args!("ERROR: failed to find route: {:?}", e),
-                    "node",
-                    "",
-                    0,
-                ));
-                return Err("failed to find route".into());
             }
             Err(PaymentError::Sending(e)) => {
                 self.logger.log(&Record::new(
@@ -1126,7 +1082,7 @@ impl LdkEventHandler {
 }
 
 impl EventHandler for LdkEventHandler {
-    fn handle_event(&self, event: &Event) {
+    fn handle_event(&self, event: Event) {
         match event {
             Event::FundingGenerationReady {
                 temporary_channel_id,
@@ -1149,7 +1105,7 @@ impl EventHandler for LdkEventHandler {
                 .expect("Lightning funding tx should always be to a SegWit output")
                 .to_address();
                 let mut outputs = HashMap::with_capacity(1);
-                outputs.insert(addr, Amount::from_sat(*channel_value_satoshis));
+                outputs.insert(addr, Amount::from_sat(channel_value_satoshis));
                 let raw_tx = self.bitcoind_client.create_raw_transaction(outputs);
 
                 // Have your wallet put the inputs into the transaction such that the output is
@@ -1167,8 +1123,8 @@ impl EventHandler for LdkEventHandler {
                 if self
                     .channel_manager
                     .funding_transaction_generated(
-                        temporary_channel_id,
-                        counterparty_node_id,
+                        &temporary_channel_id,
+                        &counterparty_node_id,
                         final_tx,
                     )
                     .is_err()
@@ -1182,10 +1138,11 @@ impl EventHandler for LdkEventHandler {
                 ));
                 }
             }
-            Event::PaymentReceived {
+            Event::PaymentClaimable {
                 payment_hash,
                 purpose,
                 amount_msat,
+                ..
             } => {
                 self.logger.log(&Record::new(
                     lightning::util::logger::Level::Info,
@@ -1202,8 +1159,8 @@ impl EventHandler for LdkEventHandler {
                 let payment_preimage = match purpose {
                     PaymentPurpose::InvoicePayment {
                         payment_preimage, ..
-                    } => *payment_preimage,
-                    PaymentPurpose::SpontaneousPayment(preimage) => Some(*preimage),
+                    } => payment_preimage,
+                    PaymentPurpose::SpontaneousPayment(preimage) => Some(preimage),
                 };
                 self.channel_manager.claim_funds(payment_preimage.unwrap());
             }
@@ -1211,6 +1168,7 @@ impl EventHandler for LdkEventHandler {
                 payment_hash,
                 purpose,
                 amount_msat,
+                ..
             } => {
                 self.logger.log(&Record::new(
                     lightning::util::logger::Level::Info,
@@ -1229,11 +1187,11 @@ impl EventHandler for LdkEventHandler {
                         payment_preimage,
                         payment_secret,
                         ..
-                    } => (*payment_preimage, Some(*payment_secret)),
-                    PaymentPurpose::SpontaneousPayment(preimage) => (Some(*preimage), None),
+                    } => (payment_preimage, Some(payment_secret)),
+                    PaymentPurpose::SpontaneousPayment(preimage) => (Some(preimage), None),
                 };
                 let mut payments = self.inbound_payments.lock().unwrap();
-                match payments.entry(*payment_hash) {
+                match payments.entry(payment_hash) {
                     Entry::Occupied(mut e) => {
                         let payment = e.get_mut();
                         payment.status = HTLCStatus::Succeeded;
@@ -1245,7 +1203,7 @@ impl EventHandler for LdkEventHandler {
                             preimage: payment_preimage,
                             secret: payment_secret,
                             status: HTLCStatus::Succeeded,
-                            amt_msat: MillisatAmount(Some(*amount_msat)),
+                            amt_msat: MillisatAmount(Some(amount_msat)),
                         });
                     }
                 }
@@ -1258,8 +1216,8 @@ impl EventHandler for LdkEventHandler {
             } => {
                 let mut payments = self.outbound_payments.lock().unwrap();
                 for (hash, payment) in payments.iter_mut() {
-                    if *hash == *payment_hash {
-                        payment.preimage = Some(*payment_preimage);
+                    if hash == &payment_hash {
+                        payment.preimage = Some(payment_preimage);
                         payment.status = HTLCStatus::Succeeded;
 
                         self.logger.log(&Record::new(
@@ -1302,8 +1260,8 @@ impl EventHandler for LdkEventHandler {
             ));
 
                 let mut payments = self.outbound_payments.lock().unwrap();
-                if payments.contains_key(payment_hash) {
-                    let payment = payments.get_mut(payment_hash).unwrap();
+                if payments.contains_key(&payment_hash) {
+                    let payment = payments.get_mut(&payment_hash).unwrap();
                     payment.status = HTLCStatus::Failed;
                 }
             }
@@ -1312,6 +1270,7 @@ impl EventHandler for LdkEventHandler {
                 next_channel_id,
                 fee_earned_msat,
                 claim_from_onchain_tx,
+                ..
             } => {
                 let read_only_network_graph = self.network_graph.read_only();
                 let nodes = read_only_network_graph.nodes();
@@ -1342,16 +1301,16 @@ impl EventHandler for LdkEventHandler {
                 };
                 let from_prev_str = format!(
                     " from {}{}",
-                    node_str(prev_channel_id),
-                    channel_str(prev_channel_id)
+                    node_str(&prev_channel_id),
+                    channel_str(&prev_channel_id)
                 );
                 let to_next_str = format!(
                     " to {}{}",
-                    node_str(next_channel_id),
-                    channel_str(next_channel_id)
+                    node_str(&next_channel_id),
+                    channel_str(&next_channel_id)
                 );
 
-                let from_onchain_str = if *claim_from_onchain_tx {
+                let from_onchain_str = if claim_from_onchain_tx {
                     "from onchain downstream claim"
                 } else {
                     "from HTLC fulfill message"
@@ -1406,10 +1365,11 @@ impl EventHandler for LdkEventHandler {
                         Vec::new(),
                         destination_address.script_pubkey(),
                         tx_feerate,
+                        None,
                         &Secp256k1::new(),
                     )
                     .unwrap();
-                self.bitcoind_client.broadcast_transaction(&spending_tx);
+                self.bitcoind_client.broadcast_transactions(&[&spending_tx]);
             }
             Event::ChannelClosed {
                 channel_id,
@@ -1420,7 +1380,7 @@ impl EventHandler for LdkEventHandler {
                     lightning::util::logger::Level::Info,
                     format_args!(
                         "EVENT: Channel {} closed due to: {:?}",
-                        hex_str(channel_id),
+                        hex_str(&channel_id),
                         reason
                     ),
                     "node",
@@ -1432,6 +1392,10 @@ impl EventHandler for LdkEventHandler {
                 // A "real" node should probably "lock" the UTXOs spent in funding transactions until
                 // the funding transaction either confirms, or this event is generated.
             }
+            Event::HTLCIntercepted { .. } => {}
+            Event::ChannelPending { .. } => {}
+            Event::ChannelReady { .. } => {}
+            Event::BumpTransaction(_) => {}
         }
     }
 }
@@ -1445,15 +1409,15 @@ pub(crate) struct PaymentInfo {
     amt_msat: MillisatAmount,
 }
 
-pub(crate) type InvoicePayer<E> = payment::InvoicePayer<
-    Arc<RunnableChannelManager>,
-    Router,
-    Arc<Mutex<ProbabilisticScorer<Arc<NetworkGraph>, Arc<FilesystemLogger>>>>,
-    Arc<FilesystemLogger>,
-    E,
->;
+pub(crate) type ProbScorer = ProbabilisticScorer<Arc<NetworkGraph>, Arc<FilesystemLogger>>;
 
-type Router = DefaultRouter<Arc<NetworkGraph>, Arc<FilesystemLogger>>;
+pub(crate) type Router = DefaultRouter<
+    Arc<NetworkGraph>,
+    Arc<FilesystemLogger>,
+    Arc<Mutex<ProbScorer>>,
+    ProbabilisticScoringFeeParameters,
+    ProbScorer,
+>;
 
 pub(crate) enum HTLCStatus {
     Pending,
@@ -1491,7 +1455,7 @@ pub(crate) type PeerManager = SimpleArcPeerManager<
     ChainMonitor,
     LdkBitcoindClient,
     LdkBitcoindClient,
-    dyn chain::Access + Send + Sync,
+    LdkBitcoindClient,
     FilesystemLogger,
 >;
 
@@ -1578,7 +1542,7 @@ pub(crate) async fn connect_peer_if_necessary(
     peer_addr: SocketAddr,
     peer_manager: Arc<PeerManager>,
 ) -> Result<(), ()> {
-    for node_pubkey in peer_manager.get_peer_node_ids() {
+    for (node_pubkey, _) in peer_manager.get_peer_node_ids() {
         if node_pubkey == pubkey {
             return Ok(());
         }
@@ -1606,7 +1570,7 @@ pub(crate) async fn do_connect_peer(
                 match peer_manager
                     .get_peer_node_ids()
                     .iter()
-                    .find(|peer_node_id| **peer_node_id == pubkey)
+                    .find(|peer_node_id| peer_node_id.0 == pubkey)
                 {
                     Some(_) => return Ok(()),
                     None => tokio::time::sleep(Duration::from_millis(10)).await,
