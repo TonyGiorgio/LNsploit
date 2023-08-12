@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use tui::{
     backend::Backend,
     layout::Rect,
@@ -8,24 +10,24 @@ use tui::{
 
 use super::constants::{green, highlight, white, yellow};
 
-pub fn draw_selectable_list<B, S>(
+pub fn draw_selectable_list<B, T>(
     f: &mut Frame<B>,
     // app: &App,
     layout_chunk: Rect,
     title: &str,
-    items: &[S],
+    items: &[T],
     highlight_state: (bool, bool),
     selected_index: Option<usize>,
 ) where
     B: Backend,
-    S: std::convert::AsRef<str>,
+    T: Display,
 {
     let mut state = ListState::default();
     state.select(selected_index);
 
     let lst_items: Vec<ListItem> = items
         .iter()
-        .map(|i| ListItem::new(Span::raw(i.as_ref())))
+        .map(|i| ListItem::new(Span::raw(i.to_string())))
         .collect();
 
     let border_color_style = {

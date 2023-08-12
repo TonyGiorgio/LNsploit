@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use super::{
     draw_exploits, draw_footer, draw_node, draw_simulation, draw_welcome, AppEvent, InputMode,
@@ -9,24 +9,65 @@ use crate::{
     handlers::{on_down_press_handler, on_up_press_handler},
     models::hex_str,
     router::{Action, ActiveBlock, Location, NodeSubLocation},
+    screens::{ExploitAction, NodeAction},
     widgets::draw::draw_selectable_list,
 };
 use anyhow::Result;
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use lightning::util::logger::{Logger, Record};
+use std::str::FromStr;
 use tui::{
     layout::{Constraint, Direction, Layout},
     widgets::{Block, Borders},
 };
 
-const MAIN_MENU: [&str; 5] = [
-    "Home",
-    "Network View",
-    "Routing",
-    "Exploits",
-    "Simulation Mode",
+#[derive(Default)]
+pub enum MenuAction {
+    Home,
+    NetworkView,
+    Routing,
+    Exploits,
+    SimulationMode,
+    #[default]
+    Invalid,
+}
+
+impl fmt::Display for MenuAction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            MenuAction::Home => write!(f, "Home"),
+            MenuAction::NetworkView => write!(f, "Network View"),
+            MenuAction::Routing => write!(f, "Routing"),
+            MenuAction::Exploits => write!(f, "Exploits"),
+            MenuAction::SimulationMode => write!(f, "Simulation Mode"),
+            MenuAction::Invalid => write!(f, "Invalid"),
+        }
+    }
+}
+
+const MAIN_MENU: [MenuAction; 5] = [
+    MenuAction::Home,
+    MenuAction::NetworkView,
+    MenuAction::Routing,
+    MenuAction::Exploits,
+    MenuAction::SimulationMode,
 ];
+
+impl FromStr for MenuAction {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Home" => Ok(MenuAction::Home),
+            "Network View" => Ok(MenuAction::NetworkView),
+            "Routing" => Ok(MenuAction::Routing),
+            "Exploits" => Ok(MenuAction::Exploits),
+            "Simulation Mode" => Ok(MenuAction::SimulationMode),
+            _ => Ok(MenuAction::Invalid),
+        }
+    }
+}
 
 pub struct ParentScreen {
     pub menu_index: usize,
@@ -39,18 +80,17 @@ impl ParentScreen {
             menu_index: 0,
             current_menu_list: MAIN_MENU
                 .iter()
-                .map(|x| String::from(*x))
+                .map(|x| x.to_string())
                 .collect::<Vec<String>>(),
         }
     }
 
     fn handle_enter_main(&mut self, _state: &mut AppState) -> Option<Action> {
         let item = self.current_menu_list[self.menu_index].clone();
-
-        let action = match String::as_str(&item) {
-            "Nodes" => Action::Push(Location::NodesList),
-            "Simulation Mode" => Action::Push(Location::Simulation),
-            "Exploits" => Action::Push(Location::Exploits),
+        let menu_action = item.parse::<MenuAction>().unwrap_or_default();
+        let action = match menu_action {
+            MenuAction::SimulationMode => Action::Push(Location::Simulation),
+            MenuAction::Exploits => Action::Push(Location::Exploits),
             _ => return None,
         };
 
@@ -59,11 +99,10 @@ impl ParentScreen {
 
     fn handle_enter_node(&mut self) -> Option<Action> {
         let item = self.current_menu_list[self.menu_index].clone();
-
         let action = Action::Push(Location::Node(item, NodeSubLocation::ActionMenu));
         let new_items = NODE_ACTION_MENU
             .iter()
-            .map(|x| String::from(*x))
+            .map(|x| x.to_string())
             .collect::<Vec<String>>();
 
         self.current_menu_list = new_items;
@@ -74,20 +113,22 @@ impl ParentScreen {
     async fn handle_enter_node_action(&self, pubkey: &str, state: &mut AppState) -> Option<Action> {
         let item = self.current_menu_list[self.menu_index].clone();
 
-        let action = match String::as_str(&item) {
-            "Connect Peer" => {
+        let node_action = item.parse::<NodeAction>().unwrap_or_default();
+
+        let action = match node_action {
+            NodeAction::ConnectPeer => {
                 // the next screen for connect peer will allow input
                 // TODO i don't think this is ever used
                 state.input_mode = InputMode::Editing;
                 Action::Push(Location::Node(pubkey.into(), NodeSubLocation::ConnectPeer))
             }
-            "Pay" => {
+            NodeAction::Pay => {
                 // the next screen for pay invoice will allow input
                 // TODO i don't think this is ever used
                 state.input_mode = InputMode::Editing;
                 Action::Push(Location::Node(pubkey.into(), NodeSubLocation::PayInvoice))
             }
-            "Broadcast revoked commitment transaction" => {
+            NodeAction::BroadcastRevokedCommitmentTransaction => {
                 // no next screen, just a force close action
                 let node_id = state
                     .node_manager
@@ -123,7 +164,7 @@ impl ParentScreen {
                     NodeSubLocation::Suicide(channels),
                 ))
             }
-            "Open Channel" => {
+            NodeAction::OpenChannel => {
                 // get the list of nodes that the peer is connect to to open channel with
                 let node_id = state
                     .node_manager
@@ -341,8 +382,11 @@ impl ParentScreen {
     }
 
     async fn handle_enter_exploit_action(&self, state: &mut AppState) -> Option<Action> {
-        let action = match self.menu_index {
-            0 => {
+        let item = self.current_menu_list[self.menu_index].clone();
+
+        let exploit_action = item.parse::<ExploitAction>().unwrap_or_default();
+        let action = match exploit_action {
+            ExploitAction::BreakLNDFifteenOne => {
                 // Broadcast LND tx
                 match state.node_manager.lock().await.broadcast_lnd_15_exploit() {
                     Ok(_) => {
@@ -368,7 +412,7 @@ impl ParentScreen {
                 }
                 None
             }
-            1 => {
+            ExploitAction::BreakLNDFifteenThree => {
                 match state
                     .node_manager
                     .lock()
@@ -439,7 +483,7 @@ impl ParentScreen {
             Location::Node(_, node_sub_location) => match node_sub_location {
                 NodeSubLocation::ActionMenu => NODE_ACTION_MENU
                     .iter()
-                    .map(|x| String::from(*x))
+                    .map(|x| x.to_string())
                     .collect::<Vec<String>>(),
                 NodeSubLocation::ConnectPeer => vec![], // NO LIST
                 NodeSubLocation::PayInvoice => vec![],  // NO LIST
@@ -455,15 +499,15 @@ impl ParentScreen {
                 .collect::<Vec<String>>(),
             Location::Exploits => EXPLOIT_ACTION_MENU
                 .iter()
-                .map(|x| String::from(*x))
+                .map(|x| x.to_string())
                 .collect::<Vec<String>>(),
             Location::Home => MAIN_MENU
                 .iter()
-                .map(|x| String::from(*x))
+                .map(|x| x.to_string())
                 .collect::<Vec<String>>(),
             Location::Simulation => SIMULATION_MENU
                 .iter()
-                .map(|x| String::from(*x))
+                .map(|x| x.to_string())
                 .collect::<Vec<String>>(),
         };
 
@@ -495,7 +539,7 @@ impl ParentScreen {
         // set menu list to menu items
         self.current_menu_list = MAIN_MENU
             .iter()
-            .map(|x| String::from(*x))
+            .map(|x| x.to_string())
             .collect::<Vec<String>>();
 
         Some(Action::Replace(Location::Home))

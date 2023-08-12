@@ -1,11 +1,4 @@
-use std::sync::Arc;
-
-use tui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    text::Text,
-    widgets::{Block, Borders, Paragraph, Wrap},
-};
-
+use super::ScreenFrame;
 use crate::{
     application::AppState,
     router::NodeSubLocation,
@@ -14,17 +7,71 @@ use crate::{
         draw::draw_selectable_list,
     },
 };
+use std::sync::Arc;
+use std::{fmt, str::FromStr};
+use tui::{
+    layout::{Constraint, Direction, Layout, Rect},
+    text::Text,
+    widgets::{Block, Borders, Paragraph, Wrap},
+};
 
-use super::ScreenFrame;
+#[derive(Default)]
+pub enum NodeAction {
+    ConnectPeer,
+    OpenChannel,
+    ListChannels,
+    Invoice,
+    Pay,
+    NewOnChainAddress,
+    BroadcastRevokedCommitmentTransaction,
+    #[default]
+    Invalid,
+}
 
-pub const NODE_ACTION_MENU: [&str; 7] = [
-    "Connect Peer",
-    "Open Channel",
-    "List Channels",
-    "Invoice",
-    "Pay",
-    "New On Chain Address",
-    "Broadcast revoked commitment transaction",
+impl fmt::Display for NodeAction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            NodeAction::ConnectPeer => write!(f, "Connect Peer"),
+            NodeAction::OpenChannel => write!(f, "Open Channel"),
+            NodeAction::ListChannels => write!(f, "List Channels"),
+            NodeAction::Invoice => write!(f, "Invoice"),
+            NodeAction::Pay => write!(f, "Pay"),
+            NodeAction::NewOnChainAddress => write!(f, "New On Chain Address"),
+            NodeAction::BroadcastRevokedCommitmentTransaction => {
+                write!(f, "Broadcast revoked commitment transaction")
+            }
+            NodeAction::Invalid => write!(f, "Invalid"),
+        }
+    }
+}
+
+impl FromStr for NodeAction {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Connect Peer" => Ok(NodeAction::ConnectPeer),
+            "Open Channel" => Ok(NodeAction::OpenChannel),
+            "List Channels" => Ok(NodeAction::ListChannels),
+            "Invoice" => Ok(NodeAction::Invoice),
+            "Pay" => Ok(NodeAction::Pay),
+            "New On Chain Address" => Ok(NodeAction::NewOnChainAddress),
+            "Broadcast revoked commitment transaction" => {
+                Ok(NodeAction::BroadcastRevokedCommitmentTransaction)
+            }
+            _ => Ok(NodeAction::Invalid),
+        }
+    }
+}
+
+pub const NODE_ACTION_MENU: [NodeAction; 7] = [
+    NodeAction::ConnectPeer,
+    NodeAction::OpenChannel,
+    NodeAction::ListChannels,
+    NodeAction::Invoice,
+    NodeAction::Pay,
+    NodeAction::NewOnChainAddress,
+    NodeAction::BroadcastRevokedCommitmentTransaction,
 ];
 
 pub fn draw_node(

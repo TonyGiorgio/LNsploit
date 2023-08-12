@@ -1,3 +1,5 @@
+use std::fmt;
+
 use tui::{
     layout::{Constraint, Direction, Layout, Rect},
     text::Text,
@@ -12,7 +14,27 @@ const INFO: &str = "
 Hey how is everyone doing? Let's do some SIMULATION
 ";
 
-pub const SIMULATION_MENU: [&str; 3] = ["Hello", "Welcome", "Goodbye"];
+pub enum SimulationAction {
+    Hello,
+    Welcome,
+    Goodbye,
+}
+
+impl fmt::Display for SimulationAction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            SimulationAction::Hello => write!(f, "Hello"),
+            SimulationAction::Welcome => write!(f, "Welcome"),
+            SimulationAction::Goodbye => write!(f, "Goodbye"),
+        }
+    }
+}
+
+pub const SIMULATION_MENU: [SimulationAction; 3] = [
+    SimulationAction::Hello,
+    SimulationAction::Welcome,
+    SimulationAction::Goodbye,
+];
 
 pub fn draw_simulation(
     frame: &mut ScreenFrame,
