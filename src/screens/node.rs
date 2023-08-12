@@ -1,12 +1,15 @@
 use super::ScreenFrame;
 use crate::{
-    application::AppState,
-    router::NodeSubLocation,
+    application::{AppState, Toast},
+    models::hex_str,
+    router::{Action, Location, NodeSubLocation},
+    screens::InputMode,
     widgets::{
         constants::{green, white, yellow},
         draw::draw_selectable_list,
     },
 };
+use lightning::util::logger::{Logger, Record};
 use std::sync::Arc;
 use std::{fmt, str::FromStr};
 use tui::{
@@ -73,6 +76,282 @@ pub const NODE_ACTION_MENU: [NodeAction; 7] = [
     NodeAction::NewOnChainAddress,
     NodeAction::BroadcastRevokedCommitmentTransaction,
 ];
+
+pub fn handle_enter_node(action_item: String) -> (Option<Action>, Option<Vec<String>>) {
+    let action = Action::Push(Location::Node(action_item, NodeSubLocation::ActionMenu));
+    let new_items = NODE_ACTION_MENU
+        .iter()
+        .map(|x| x.to_string())
+        .collect::<Vec<String>>();
+
+    (Some(action), Some(new_items))
+}
+
+pub async fn handle_enter_node_action(
+    pubkey: &str,
+    state: &mut AppState,
+    node_action: NodeAction,
+) -> (Option<Action>, Option<Vec<String>>) {
+    let action = match node_action {
+        NodeAction::ConnectPeer => {
+            // the next screen for connect peer will allow input
+            // TODO i don't think this is ever used
+            state.input_mode = InputMode::Editing;
+            Action::Push(Location::Node(pubkey.into(), NodeSubLocation::ConnectPeer))
+        }
+        NodeAction::Pay => {
+            // the next screen for pay invoice will allow input
+            // TODO i don't think this is ever used
+            state.input_mode = InputMode::Editing;
+            Action::Push(Location::Node(pubkey.into(), NodeSubLocation::PayInvoice))
+        }
+        NodeAction::BroadcastRevokedCommitmentTransaction => {
+            // no next screen, just a force close action
+            let node_id = state
+                .node_manager
+                .lock()
+                .await
+                .get_node_id_by_pubkey(pubkey)
+                .await
+                .expect("Pubkey should have corresponding node_id");
+
+            let channels = state
+                .node_manager
+                .lock()
+                .await
+                .list_channels(node_id)
+                .iter()
+                .map(|c| {
+                    c.counterparty.node_id.to_string()
+                        + ":"
+                        + String::as_str(&hex_str(&c.channel_id))
+                })
+                .collect();
+
+            state.logger.clone().log(&Record::new(
+                lightning::util::logger::Level::Debug,
+                format_args!("channels: {:?}", channels),
+                "dad",
+                "",
+                334,
+            ));
+
+            Action::Push(Location::Node(
+                pubkey.into(),
+                NodeSubLocation::Suicide(channels),
+            ))
+        }
+        NodeAction::OpenChannel => {
+            // get the list of nodes that the peer is connect to to open channel with
+            let node_id = state
+                .node_manager
+                .lock()
+                .await
+                .get_node_id_by_pubkey(pubkey)
+                .await
+                .expect("Pubkey should have corresponding node_id");
+
+            let peer_pubkeys = state.node_manager.lock().await.list_peers(node_id);
+
+            Action::Push(Location::Node(
+                pubkey.into(),
+                NodeSubLocation::OpenChannel(peer_pubkeys),
+            ))
+        }
+        _ => return (None, None),
+    };
+
+    (Some(action), None)
+}
+
+pub async fn handle_connect_peer_action(
+    pubkey: &str,
+    state: &mut AppState,
+) -> (Option<Action>, Option<Vec<String>>) {
+    let node_id = state
+        .node_manager
+        .lock()
+        .await
+        .get_node_id_by_pubkey(pubkey)
+        .await
+        .expect("Pubkey should have corresponding node_id");
+
+    if let Some(peer_connection_string) = state.paste_contents.clone() {
+        match state
+            .node_manager
+            .lock()
+            .await
+            .connect_peer(node_id, peer_connection_string.to_string())
+            .await
+        {
+            Ok(_) => {
+                state.toast = Some(Toast::new("Connected to peer", true));
+                state.logger.clone().log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!("connected to peer"),
+                    "dad",
+                    "",
+                    334,
+                ));
+            }
+            Err(e) => {
+                state.toast = Some(Toast::new("Could not connect to peer", false));
+                state.logger.clone().log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("{}", e),
+                    "dad",
+                    "",
+                    334,
+                ));
+            }
+        }
+    }
+
+    (None, None)
+}
+
+pub async fn handle_pay_invoice_action(
+    pubkey: &str,
+    state: &mut AppState,
+) -> (Option<Action>, Option<Vec<String>>) {
+    let node_id = state
+        .node_manager
+        .lock()
+        .await
+        .get_node_id_by_pubkey(pubkey)
+        .await
+        .expect("Pubkey should have corresponding node_id");
+
+    if let Some(invoice_string) = state.paste_contents.clone() {
+        match state
+            .node_manager
+            .lock()
+            .await
+            .pay_invoice(node_id, invoice_string.to_string())
+        {
+            Ok(_) => {
+                state.toast = Some(Toast::new("Initiated payment", true));
+                state.logger.clone().log(&Record::new(
+                    lightning::util::logger::Level::Info,
+                    format_args!("initiated invoice payment"),
+                    "dad",
+                    "",
+                    334,
+                ));
+            }
+            Err(e) => {
+                state.toast = Some(Toast::new("Failed to initiated payment", false));
+                state.logger.clone().log(&Record::new(
+                    lightning::util::logger::Level::Error,
+                    format_args!("{}", e),
+                    "dad",
+                    "",
+                    334,
+                ));
+            }
+        }
+    }
+
+    (None, None)
+}
+
+pub async fn handle_open_channel_action(
+    pubkey: &str,
+    state: &mut AppState,
+    item_action: String,
+) -> (Option<Action>, Option<Vec<String>>) {
+    let node_id = state
+        .node_manager
+        .lock()
+        .await
+        .get_node_id_by_pubkey(pubkey)
+        .await
+        .expect("Pubkey should have corresponding node_id");
+
+    match state
+        .node_manager
+        .lock()
+        .await
+        .open_channel(node_id, item_action, 100_000)
+        .await
+    {
+        Ok(_) => {
+            state.toast = Some(Toast::new("Opened channel to peer", true));
+            state.logger.clone().log(&Record::new(
+                lightning::util::logger::Level::Info,
+                format_args!("Opened channel to peer"),
+                "dad",
+                "",
+                334,
+            ));
+            (None, None)
+        }
+        Err(e) => {
+            state.toast = Some(Toast::new("Failed to open channel to peer", false));
+            state.logger.clone().log(&Record::new(
+                lightning::util::logger::Level::Error,
+                format_args!("{}", e),
+                "dad",
+                "",
+                334,
+            ));
+            (None, None)
+        }
+    }
+}
+
+pub async fn handle_force_close_prev_channel_action(
+    pubkey: &str,
+    state: &mut AppState,
+    item_action: String,
+) -> (Option<Action>, Option<Vec<String>>) {
+    let mut items = item_action.split(':');
+    let counterparty_pubkey = items.next();
+    let channel_id = items.next();
+
+    let node_id = state
+        .node_manager
+        .lock()
+        .await
+        .get_node_id_by_pubkey(pubkey)
+        .await
+        .expect("Pubkey should have corresponding node_id");
+
+    match state
+        .node_manager
+        .lock()
+        .await
+        .force_close_channel_with_initial_state(
+            node_id,
+            String::from(channel_id.unwrap()),
+            String::from(counterparty_pubkey.unwrap()),
+        )
+        .await
+    {
+        Ok(_) => {
+            state.toast = Some(Toast::new("Force closed channel", true));
+            state.logger.clone().log(&Record::new(
+                lightning::util::logger::Level::Info,
+                format_args!("force closed transaction"),
+                "dad",
+                "",
+                334,
+            ));
+            (None, None)
+        }
+        Err(e) => {
+            state.toast = Some(Toast::new("Failed to force close channel", false));
+            state.logger.clone().log(&Record::new(
+                lightning::util::logger::Level::Error,
+                format_args!("{}", e),
+                "dad",
+                "",
+                334,
+            ));
+            (None, None)
+        }
+    }
+}
 
 pub fn draw_node(
     frame: &mut ScreenFrame,

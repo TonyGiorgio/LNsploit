@@ -1,73 +1,27 @@
-use std::{fmt, sync::Arc};
-
 use super::{
-    draw_exploits, draw_footer, draw_node, draw_simulation, draw_welcome, AppEvent, InputMode,
-    Screen, ScreenFrame, EXPLOIT_ACTION_MENU, NODE_ACTION_MENU, SIMULATION_MENU,
+    draw_exploits, draw_footer, draw_node, draw_simulation, draw_welcome, AppEvent, Screen,
+    ScreenFrame, EXPLOIT_ACTION_MENU, NODE_ACTION_MENU, SIMULATION_MENU,
 };
 use crate::{
-    application::{AppState, Toast},
+    application::AppState,
     handlers::{on_down_press_handler, on_up_press_handler},
-    models::hex_str,
     router::{Action, ActiveBlock, Location, NodeSubLocation},
-    screens::{ExploitAction, NodeAction},
+    screens::{
+        handle_connect_peer_action, handle_enter_exploit_action, handle_enter_main,
+        handle_enter_main_menu, handle_enter_node, handle_enter_node_action,
+        handle_enter_node_list, handle_force_close_prev_channel_action, handle_open_channel_action,
+        handle_pay_invoice_action, ExploitAction, MenuAction, NodeAction, MAIN_MENU,
+    },
     widgets::draw::draw_selectable_list,
 };
 use anyhow::Result;
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
-use lightning::util::logger::{Logger, Record};
-use std::str::FromStr;
+use std::sync::Arc;
 use tui::{
     layout::{Constraint, Direction, Layout},
     widgets::{Block, Borders},
 };
-
-#[derive(Default)]
-pub enum MenuAction {
-    Home,
-    NetworkView,
-    Routing,
-    Exploits,
-    SimulationMode,
-    #[default]
-    Invalid,
-}
-
-impl fmt::Display for MenuAction {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            MenuAction::Home => write!(f, "Home"),
-            MenuAction::NetworkView => write!(f, "Network View"),
-            MenuAction::Routing => write!(f, "Routing"),
-            MenuAction::Exploits => write!(f, "Exploits"),
-            MenuAction::SimulationMode => write!(f, "Simulation Mode"),
-            MenuAction::Invalid => write!(f, "Invalid"),
-        }
-    }
-}
-
-const MAIN_MENU: [MenuAction; 5] = [
-    MenuAction::Home,
-    MenuAction::NetworkView,
-    MenuAction::Routing,
-    MenuAction::Exploits,
-    MenuAction::SimulationMode,
-];
-
-impl FromStr for MenuAction {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "Home" => Ok(MenuAction::Home),
-            "Network View" => Ok(MenuAction::NetworkView),
-            "Routing" => Ok(MenuAction::Routing),
-            "Exploits" => Ok(MenuAction::Exploits),
-            "Simulation Mode" => Ok(MenuAction::SimulationMode),
-            _ => Ok(MenuAction::Invalid),
-        }
-    }
-}
 
 pub struct ParentScreen {
     pub menu_index: usize,
@@ -83,369 +37,6 @@ impl ParentScreen {
                 .map(|x| x.to_string())
                 .collect::<Vec<String>>(),
         }
-    }
-
-    fn handle_enter_main(&mut self, _state: &mut AppState) -> Option<Action> {
-        let item = self.current_menu_list[self.menu_index].clone();
-        let menu_action = item.parse::<MenuAction>().unwrap_or_default();
-        let action = match menu_action {
-            MenuAction::SimulationMode => Action::Push(Location::Simulation),
-            MenuAction::Exploits => Action::Push(Location::Exploits),
-            _ => return None,
-        };
-
-        Some(action)
-    }
-
-    fn handle_enter_node(&mut self) -> Option<Action> {
-        let item = self.current_menu_list[self.menu_index].clone();
-        let action = Action::Push(Location::Node(item, NodeSubLocation::ActionMenu));
-        let new_items = NODE_ACTION_MENU
-            .iter()
-            .map(|x| x.to_string())
-            .collect::<Vec<String>>();
-
-        self.current_menu_list = new_items;
-
-        Some(action)
-    }
-
-    async fn handle_enter_node_action(&self, pubkey: &str, state: &mut AppState) -> Option<Action> {
-        let item = self.current_menu_list[self.menu_index].clone();
-
-        let node_action = item.parse::<NodeAction>().unwrap_or_default();
-
-        let action = match node_action {
-            NodeAction::ConnectPeer => {
-                // the next screen for connect peer will allow input
-                // TODO i don't think this is ever used
-                state.input_mode = InputMode::Editing;
-                Action::Push(Location::Node(pubkey.into(), NodeSubLocation::ConnectPeer))
-            }
-            NodeAction::Pay => {
-                // the next screen for pay invoice will allow input
-                // TODO i don't think this is ever used
-                state.input_mode = InputMode::Editing;
-                Action::Push(Location::Node(pubkey.into(), NodeSubLocation::PayInvoice))
-            }
-            NodeAction::BroadcastRevokedCommitmentTransaction => {
-                // no next screen, just a force close action
-                let node_id = state
-                    .node_manager
-                    .lock()
-                    .await
-                    .get_node_id_by_pubkey(pubkey)
-                    .await
-                    .expect("Pubkey should have corresponding node_id");
-
-                let channels = state
-                    .node_manager
-                    .lock()
-                    .await
-                    .list_channels(node_id)
-                    .iter()
-                    .map(|c| {
-                        c.counterparty.node_id.to_string()
-                            + ":"
-                            + String::as_str(&hex_str(&c.channel_id))
-                    })
-                    .collect();
-
-                state.logger.clone().log(&Record::new(
-                    lightning::util::logger::Level::Debug,
-                    format_args!("channels: {:?}", channels),
-                    "dad",
-                    "",
-                    334,
-                ));
-
-                Action::Push(Location::Node(
-                    pubkey.into(),
-                    NodeSubLocation::Suicide(channels),
-                ))
-            }
-            NodeAction::OpenChannel => {
-                // get the list of nodes that the peer is connect to to open channel with
-                let node_id = state
-                    .node_manager
-                    .lock()
-                    .await
-                    .get_node_id_by_pubkey(pubkey)
-                    .await
-                    .expect("Pubkey should have corresponding node_id");
-
-                let peer_pubkeys = state.node_manager.lock().await.list_peers(node_id);
-
-                Action::Push(Location::Node(
-                    pubkey.into(),
-                    NodeSubLocation::OpenChannel(peer_pubkeys),
-                ))
-            }
-            _ => return None,
-        };
-
-        Some(action)
-    }
-
-    async fn handle_connect_peer_action(
-        &self,
-        pubkey: &str,
-        state: &mut AppState,
-    ) -> Option<Action> {
-        let node_id = state
-            .node_manager
-            .lock()
-            .await
-            .get_node_id_by_pubkey(pubkey)
-            .await
-            .expect("Pubkey should have corresponding node_id");
-
-        if let Some(peer_connection_string) = state.paste_contents.clone() {
-            match state
-                .node_manager
-                .lock()
-                .await
-                .connect_peer(node_id, peer_connection_string.to_string())
-                .await
-            {
-                Ok(_) => {
-                    state.toast = Some(Toast::new("Connected to peer", true));
-                    state.logger.clone().log(&Record::new(
-                        lightning::util::logger::Level::Info,
-                        format_args!("connected to peer"),
-                        "dad",
-                        "",
-                        334,
-                    ));
-                }
-                Err(e) => {
-                    state.toast = Some(Toast::new("Could not connect to peer", false));
-                    state.logger.clone().log(&Record::new(
-                        lightning::util::logger::Level::Error,
-                        format_args!("{}", e),
-                        "dad",
-                        "",
-                        334,
-                    ));
-                }
-            }
-        }
-
-        None
-    }
-
-    async fn handle_pay_invoice_action(
-        &self,
-        pubkey: &str,
-        state: &mut AppState,
-    ) -> Option<Action> {
-        let node_id = state
-            .node_manager
-            .lock()
-            .await
-            .get_node_id_by_pubkey(pubkey)
-            .await
-            .expect("Pubkey should have corresponding node_id");
-
-        if let Some(invoice_string) = state.paste_contents.clone() {
-            match state
-                .node_manager
-                .lock()
-                .await
-                .pay_invoice(node_id, invoice_string.to_string())
-            {
-                Ok(_) => {
-                    state.toast = Some(Toast::new("Initiated payment", true));
-                    state.logger.clone().log(&Record::new(
-                        lightning::util::logger::Level::Info,
-                        format_args!("initiated invoice payment"),
-                        "dad",
-                        "",
-                        334,
-                    ));
-                }
-                Err(e) => {
-                    state.toast = Some(Toast::new("Failed to initiated payment", false));
-                    state.logger.clone().log(&Record::new(
-                        lightning::util::logger::Level::Error,
-                        format_args!("{}", e),
-                        "dad",
-                        "",
-                        334,
-                    ));
-                }
-            }
-        }
-
-        None
-    }
-
-    async fn handle_open_channel_action(
-        &self,
-        pubkey: &str,
-        state: &mut AppState,
-    ) -> Option<Action> {
-        let item = self.current_menu_list[self.menu_index].clone();
-
-        let node_id = state
-            .node_manager
-            .lock()
-            .await
-            .get_node_id_by_pubkey(pubkey)
-            .await
-            .expect("Pubkey should have corresponding node_id");
-
-        match state
-            .node_manager
-            .lock()
-            .await
-            .open_channel(node_id, item, 100_000)
-            .await
-        {
-            Ok(_) => {
-                state.toast = Some(Toast::new("Opened channel to peer", true));
-                state.logger.clone().log(&Record::new(
-                    lightning::util::logger::Level::Info,
-                    format_args!("Opened channel to peer"),
-                    "dad",
-                    "",
-                    334,
-                ));
-                None
-            }
-            Err(e) => {
-                state.toast = Some(Toast::new("Failed to open channel to peer", false));
-                state.logger.clone().log(&Record::new(
-                    lightning::util::logger::Level::Error,
-                    format_args!("{}", e),
-                    "dad",
-                    "",
-                    334,
-                ));
-                None
-            }
-        }
-    }
-
-    async fn handle_force_close_prev_channel_action(
-        &self,
-        pubkey: &str,
-        state: &mut AppState,
-    ) -> Option<Action> {
-        let item = self.current_menu_list[self.menu_index].clone();
-        let mut items = item.split(':');
-        let counterparty_pubkey = items.next();
-        let channel_id = items.next();
-
-        let node_id = state
-            .node_manager
-            .lock()
-            .await
-            .get_node_id_by_pubkey(pubkey)
-            .await
-            .expect("Pubkey should have corresponding node_id");
-
-        match state
-            .node_manager
-            .lock()
-            .await
-            .force_close_channel_with_initial_state(
-                node_id,
-                String::from(channel_id.unwrap()),
-                String::from(counterparty_pubkey.unwrap()),
-            )
-            .await
-        {
-            Ok(_) => {
-                state.toast = Some(Toast::new("Force closed channel", true));
-                state.logger.clone().log(&Record::new(
-                    lightning::util::logger::Level::Info,
-                    format_args!("force closed transaction"),
-                    "dad",
-                    "",
-                    334,
-                ));
-                None
-            }
-            Err(e) => {
-                state.toast = Some(Toast::new("Failed to force close channel", false));
-                state.logger.clone().log(&Record::new(
-                    lightning::util::logger::Level::Error,
-                    format_args!("{}", e),
-                    "dad",
-                    "",
-                    334,
-                ));
-                None
-            }
-        }
-    }
-
-    async fn handle_enter_exploit_action(&self, state: &mut AppState) -> Option<Action> {
-        let item = self.current_menu_list[self.menu_index].clone();
-
-        let exploit_action = item.parse::<ExploitAction>().unwrap_or_default();
-        let action = match exploit_action {
-            ExploitAction::BreakLNDFifteenOne => {
-                // Broadcast LND tx
-                match state.node_manager.lock().await.broadcast_lnd_15_exploit() {
-                    Ok(_) => {
-                        state.toast = Some(Toast::new("Broadcast transaction!", true));
-                        state.logger.clone().log(&Record::new(
-                            lightning::util::logger::Level::Debug,
-                            format_args!("broadcasted tx!"),
-                            "dad",
-                            "",
-                            334,
-                        ));
-                    }
-                    Err(e) => {
-                        state.toast = Some(Toast::new("Failed to broadcast transaction", false));
-                        state.logger.clone().log(&Record::new(
-                            lightning::util::logger::Level::Debug,
-                            format_args!("failure to broadcast tx: {}", e),
-                            "dad",
-                            "",
-                            334,
-                        ));
-                    }
-                }
-                None
-            }
-            ExploitAction::BreakLNDFifteenThree => {
-                match state
-                    .node_manager
-                    .lock()
-                    .await
-                    .broadcast_lnd_max_witness_items_exploit()
-                {
-                    Ok(_) => {
-                        state.toast = Some(Toast::new("Malicious block mined!", true));
-                        state.logger.clone().log(&Record::new(
-                            lightning::util::logger::Level::Debug,
-                            format_args!("malicious block mined!"),
-                            "dad",
-                            "",
-                            334,
-                        ));
-                    }
-                    Err(e) => {
-                        state.toast = Some(Toast::new("Failed to mine malicious block", false));
-                        state.logger.clone().log(&Record::new(
-                            lightning::util::logger::Level::Debug,
-                            format_args!("failure to to mine malicious block: {}", e),
-                            "dad",
-                            "",
-                            334,
-                        ));
-                    }
-                }
-                None
-            }
-            _ => return None,
-        };
-
-        action
     }
 
     fn handle_esc(&mut self, state: &mut AppState) -> Option<Action> {
@@ -512,37 +103,6 @@ impl ParentScreen {
         };
 
         self.menu_index = 0;
-    }
-
-    fn handle_enter_node_list(&mut self, state: &mut AppState) -> Option<Action> {
-        // if the current active block is node list then do nothing
-        if state.router.get_active_block() == &ActiveBlock::Nodes {
-            return None;
-        }
-
-        // set menu list to node list
-        self.current_menu_list = state
-            .cached_nodes_list
-            .iter()
-            .map(String::from)
-            .collect::<Vec<String>>();
-
-        Some(Action::Replace(Location::NodesList))
-    }
-
-    fn handle_enter_main_menu(&mut self, state: &mut AppState) -> Option<Action> {
-        // if the current active block is node list then do nothing
-        if state.router.get_active_block() == &ActiveBlock::Menu {
-            return None;
-        }
-
-        // set menu list to menu items
-        self.current_menu_list = MAIN_MENU
-            .iter()
-            .map(|x| x.to_string())
-            .collect::<Vec<String>>();
-
-        Some(Action::Replace(Location::Home))
     }
 }
 
@@ -697,12 +257,18 @@ impl Screen for ParentScreen {
                     state.cached_nodes_list = Arc::new(nodes_list);
                 }
                 KeyCode::Char('M') => {
-                    let new_action = self.handle_enter_main_menu(state);
+                    let (new_action, new_list) = handle_enter_main_menu(state);
+                    if let Some(new_list) = new_list {
+                        self.current_menu_list = new_list;
+                    }
                     self.menu_index = 0; // reset when pressed
                     return Ok(new_action);
                 }
                 KeyCode::Char('L') => {
-                    let new_action = self.handle_enter_node_list(state);
+                    let (new_action, new_list) = handle_enter_node_list(state);
+                    if let Some(new_list) = new_list {
+                        self.current_menu_list = new_list;
+                    }
                     self.menu_index = 0; // reset when pressed
                     return Ok(new_action);
                 }
@@ -722,53 +288,60 @@ impl Screen for ParentScreen {
                     return Ok(new_action);
                 }
                 KeyCode::Enter => {
-                    // check if enter is on main screen or node screen
-                    let current_route = { state.router.get_active_block().clone() };
-                    let new_action = match current_route {
-                        ActiveBlock::Menu => self.handle_enter_main(state),
-                        ActiveBlock::Nodes => self.handle_enter_node(),
+                    // check the context for which the user is hitting enter on
+                    let current_route = state.router.get_active_block().clone();
+                    let current_item = self.current_menu_list[self.menu_index].clone();
+
+                    // apply the enter onto the active screen
+                    let (new_action, new_list) = match current_route {
+                        ActiveBlock::Menu => {
+                            let menu_action =
+                                current_item.parse::<MenuAction>().unwrap_or_default();
+                            handle_enter_main(state, menu_action)
+                        }
+                        ActiveBlock::Nodes => handle_enter_node(current_item),
                         ActiveBlock::Main(location) => match location {
-                            Location::Home => None,
-                            Location::NodesList => None,
-                            Location::Exploits => self.handle_enter_exploit_action(state).await,
+                            Location::Home => (None, None),
+                            Location::NodesList => (None, None),
+                            Location::Exploits => {
+                                let exploit_action =
+                                    current_item.parse::<ExploitAction>().unwrap_or_default();
+                                handle_enter_exploit_action(state, exploit_action).await
+                            }
                             Location::Node(pubkey, sub_location) => match sub_location {
                                 NodeSubLocation::ActionMenu => {
-                                    let action =
-                                        self.handle_enter_node_action(&pubkey, state).await;
-                                    state.logger.clone().log(&Record::new(
-                                        lightning::util::logger::Level::Debug,
-                                        format_args!(
-                                            "action: {:?}, current sublocation: {:?}",
-                                            action, sub_location
-                                        ),
-                                        "dad",
-                                        "",
-                                        334,
-                                    ));
-                                    action
+                                    let node_action =
+                                        current_item.parse::<NodeAction>().unwrap_or_default();
+                                    handle_enter_node_action(&pubkey, state, node_action).await
                                 }
                                 NodeSubLocation::ConnectPeer => {
-                                    self.handle_connect_peer_action(&pubkey, state).await
+                                    handle_connect_peer_action(&pubkey, state).await
                                 }
                                 NodeSubLocation::PayInvoice => {
-                                    self.handle_pay_invoice_action(&pubkey, state).await
+                                    handle_pay_invoice_action(&pubkey, state).await
                                 }
                                 NodeSubLocation::OpenChannel(_) => {
-                                    self.handle_open_channel_action(&pubkey, state).await
+                                    handle_open_channel_action(&pubkey, state, current_item).await
                                 }
                                 NodeSubLocation::Suicide(_) => {
-                                    self.handle_force_close_prev_channel_action(&pubkey, state)
-                                        .await
+                                    handle_force_close_prev_channel_action(
+                                        &pubkey,
+                                        state,
+                                        current_item,
+                                    )
+                                    .await
                                 }
-                                NodeSubLocation::ListChannels => None,
-                                NodeSubLocation::NewAddress => None,
+                                NodeSubLocation::ListChannels => (None, None),
+                                NodeSubLocation::NewAddress => (None, None),
                             },
-                            Location::Simulation => None,
+                            Location::Simulation => (None, None),
                         },
-                        _ => None,
                     };
 
                     // if enter does something, always try to reset items
+                    if let Some(new_list) = new_list {
+                        self.current_menu_list = new_list;
+                    }
                     if let Some(new_action) = new_action.clone() {
                         self.set_list(
                             state,

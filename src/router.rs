@@ -27,23 +27,15 @@ pub enum Action {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActiveBlock {
-    NoneBlock,
     Menu,
     Nodes,
     Main(Location),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HoveredBlock {
-    Menu,
-    Nodes,
 }
 
 pub struct Router {
     screen_stack: Vec<Location>,
     active_route: Location,
     active_block: ActiveBlock,
-    hovered_block: HoveredBlock,
 }
 
 impl Router {
@@ -53,7 +45,6 @@ impl Router {
             screen_stack,
             active_route: Location::Home,
             active_block: ActiveBlock::Menu,
-            hovered_block: HoveredBlock::Menu,
         }
     }
 

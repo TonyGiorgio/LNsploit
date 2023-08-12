@@ -1060,6 +1060,7 @@ pub struct LdkEventHandler {
 }
 
 impl LdkEventHandler {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         channel_manager: Arc<RunnableChannelManager>,
         bitcoind_client: Arc<LdkBitcoindClient>,
