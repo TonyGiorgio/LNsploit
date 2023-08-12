@@ -1346,7 +1346,7 @@ impl EventHandler for LdkEventHandler {
                 let forwarding_channel_manager = self.channel_manager.clone();
                 let min = time_forwardable.as_millis() as u64;
                 tokio::spawn(async move {
-                    let millis_to_sleep = rand::thread_rng().gen_range(min, min * 5) as u64;
+                    let millis_to_sleep = rand::thread_rng().gen_range(min, min * 5);
                     tokio::time::sleep(Duration::from_millis(millis_to_sleep)).await;
                     forwarding_channel_manager.process_pending_htlc_forwards();
                 });

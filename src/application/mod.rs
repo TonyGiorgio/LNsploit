@@ -1,5 +1,5 @@
-mod application;
+mod app;
 mod toast;
 
-pub use application::*;
+pub use app::*;
 pub use toast::*;

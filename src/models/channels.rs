@@ -300,7 +300,7 @@ impl<ChannelSigner: WriteableEcdsaChannelSigner> chainmonitor::Persist<ChannelSi
                     node_id: String::as_str(&self.node_db_id),
                     channel_tx_id: String::as_str(&funding_txo_txid),
                     channel_tx_index: funding_txo.index as i32,
-                    channel_internal_update_id: update.clone().unwrap().update_id as i32,
+                    channel_internal_update_id: update.unwrap().update_id as i32,
                     channel_update_data: monitor_data,
                 };
                 match diesel::insert_into(channel_updates)
@@ -381,7 +381,7 @@ impl KVNodePersister {
 
         if already_init {
             let mut readable_kv_value = Cursor::new(kv_value);
-            let args = (params.clone(), Arc::clone(&graph), Arc::clone(&logger));
+            let args = (params, Arc::clone(&graph), Arc::clone(&logger));
             if let Ok(scorer) = ProbabilisticScorer::read(&mut readable_kv_value, args) {
                 // println!("Reading {:?} took {}s", path, now.elapsed().as_secs_f64());
                 return scorer;
