@@ -50,6 +50,8 @@ struct LoggerConfig {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    //console_subscriber::init();
+
     // config parsing
     let config_path = std::env::args()
         .nth(1)

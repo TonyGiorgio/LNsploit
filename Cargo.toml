@@ -3,7 +3,11 @@ edition = "2021"
 name    = "lnsploit"
 version = "0.1.0"
 
+[build]
+rustflags = ["--cfg", "tokio_unstable"]
+
 [dependencies]
+console-subscriber = "0.1.10"
 lightning = { version = "0.0.116", features = ["max_level_trace"] }
 lightning-block-sync = { version = "0.0.116", features = [ "rpc-client" ] }
 lightning-net-tokio = { version = "0.0.116" }
@@ -20,13 +24,13 @@ chrono = "0.4.22"
 rand = "0.4"
 crossterm = "0.25.0"
 tokio     = { version = "1.21.0", features = ["rt-multi-thread", "macros", "time", "sync"] }
-tui       = "0.19.0"
+tui = { package = "ratatui", version = "0.22.0" }
 async-trait = "0.1.57"
 futures = "0.3.24"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 diesel = { version = "2.0", features = ["sqlite", "r2d2"] }
-diesel_migrations = "2.0.0"
+diesel_migrations = "2.1.0"
 uuid = { version = "1.1.2", features = ["v4"] }
 rand_core = { version = "0.6", features = ["std"] }
 hex = "0.4.3"

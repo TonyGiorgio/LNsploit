@@ -16,12 +16,16 @@ use diesel::r2d2::Pool;
 use diesel::SqliteConnection;
 use futures::executor::block_on;
 use lightning::util::logger::{Logger, Record};
-use std::io::{self, Stdout};
 use std::sync::{
+    atomic::Ordering,
     mpsc::{self, Receiver},
     Arc,
 };
 use std::time::{Duration, Instant};
+use std::{
+    io::{self, Stdout},
+    sync::atomic::AtomicBool,
+};
 use tokio::sync::Mutex;
 use tui::{backend::CrosstermBackend, Terminal};
 
@@ -57,13 +61,19 @@ impl Application {
         bitcoind_client: Client,
         logger: Arc<FilesystemLogger>,
     ) -> Result<()> {
-        let inputs = match self.init_event_channel() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let inputs = match self.init_event_channel(stop.clone()) {
             Ok(inputs) => inputs,
             Err(err) => return self.close().or(Err(err)),
         };
 
-        let node_manager =
-            NodeManager::new(db.clone(), Arc::new(bitcoind_client), logger.clone()).await;
+        let node_manager = NodeManager::new(
+            db.clone(),
+            Arc::new(bitcoind_client),
+            logger.clone(),
+            stop.clone(),
+        )
+        .await;
         let node_manager = Arc::new(Mutex::new(node_manager));
 
         let nodes_list = {
@@ -174,6 +184,7 @@ impl Application {
                             0,
                         ));
                         // state.navigation_stack.pop();
+                        stop.store(true, Ordering::Relaxed);
                         break;
                     }
                     AppEvent::Back => {
@@ -276,32 +287,32 @@ impl Application {
         self.close()
     }
 
-    fn init_event_channel(&self) -> Result<Receiver<AppEvent>> {
+    fn init_event_channel(&self, stop: Arc<AtomicBool>) -> Result<Receiver<AppEvent>> {
         let (tx, rx) = mpsc::channel();
         let tick_rate = Duration::from_millis(400);
 
         tokio::spawn(async move {
             let mut last_tick = Instant::now();
             loop {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+
                 let timeout = tick_rate
                     .checked_sub(last_tick.elapsed())
                     .unwrap_or_else(|| Duration::from_secs(0));
 
                 if event::poll(timeout).expect("poll works") {
                     if let CEvent::Key(key) = event::read().expect("can read events") {
-                        let (app_event, _exit) = match (key.code, key.modifiers) {
-                            (KeyCode::Esc, _) => (AppEvent::Back, false),
-                            (KeyCode::Char('q'), _) => (AppEvent::Quit, false),
-                            (KeyCode::Char('c'), KeyModifiers::CONTROL) => (AppEvent::Copy, false),
-                            (KeyCode::Char('v'), KeyModifiers::CONTROL) => (AppEvent::Paste, false),
-                            (KeyCode::Insert, KeyModifiers::SHIFT) => (AppEvent::Paste, false),
-                            _ => (AppEvent::Input(key), false),
+                        let app_event = match (key.code, key.modifiers) {
+                            (KeyCode::Esc, _) => AppEvent::Back,
+                            (KeyCode::Char('q'), _) => AppEvent::Quit,
+                            (KeyCode::Char('c'), KeyModifiers::CONTROL) => AppEvent::Copy,
+                            (KeyCode::Char('v'), KeyModifiers::CONTROL) => AppEvent::Paste,
+                            (KeyCode::Insert, KeyModifiers::SHIFT) => AppEvent::Paste,
+                            _ => AppEvent::Input(key),
                         };
                         tx.send(app_event).expect("can send events");
-                        // TODO: we have to pass the quit event, so we don't get to clean up this thread here anymore
-                        // if exit {
-                        //     return;
-                        // }
                     }
                 }
 

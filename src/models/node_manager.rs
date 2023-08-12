@@ -14,8 +14,8 @@ use diesel::SqliteConnection;
 use lightning::ln::channelmanager::ChannelDetails;
 use lightning::util::logger::{Logger, Record};
 use rand_core::OsRng;
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::{collections::HashMap, sync::atomic::AtomicBool};
 use uuid::Uuid;
 
 pub struct NodeManager {
@@ -23,6 +23,7 @@ pub struct NodeManager {
     nodes: HashMap<String, Arc<RunnableNode>>,
     bitcoind_client: Arc<Client>,
     logger: Arc<FilesystemLogger>,
+    stop: Arc<AtomicBool>,
 }
 
 impl NodeManager {
@@ -30,12 +31,14 @@ impl NodeManager {
         db: Pool<ConnectionManager<SqliteConnection>>,
         bitcoind_client: Arc<Client>,
         logger: Arc<FilesystemLogger>,
+        stop: Arc<AtomicBool>,
     ) -> Self {
         let mut node_manager = Self {
             db: db.clone(),
             bitcoind_client: bitcoind_client.clone(),
             nodes: HashMap::new(),
             logger: logger.clone(),
+            stop: stop.clone(),
         };
 
         // check to make sure at least one master key has been initialized
@@ -51,6 +54,7 @@ impl NodeManager {
                 node_item.key_id.clone(),
                 bitcoind_client.clone(),
                 runnable_node_logger.clone(),
+                stop.clone(),
             )
             .await
             .expect("could not start node"); // TODO do not panic
@@ -207,6 +211,7 @@ impl NodeManager {
             new_node_key_id.clone(),
             self.bitcoind_client.clone(),
             self.logger.clone(),
+            self.stop.clone(),
         )
         .await?;
 
@@ -301,7 +306,7 @@ impl NodeManager {
         }
 
         // if no master keys, create one
-        let mnemonic_key = Mnemonic::random(&mut OsRng, Default::default());
+        let mnemonic_key = Mnemonic::random(OsRng, Default::default());
         let new_master_key_id = Uuid::new_v4().to_string();
         let new_master_key = NewMasterKey {
             id: String::as_str(&new_master_key_id),

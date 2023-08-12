@@ -40,8 +40,6 @@ use lightning_invoice::payment::{pay_invoice, PaymentError};
 use lightning_invoice::{utils, Bolt11Invoice, Currency};
 use lightning_net_tokio::SocketDescriptor;
 use rand::Rng;
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
 use std::fmt;
 use std::io::Cursor;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -49,6 +47,8 @@ use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
+use std::{collections::hash_map::Entry, sync::atomic::AtomicBool};
+use std::{collections::HashMap, sync::atomic::Ordering};
 
 #[derive(Queryable)]
 pub struct Node {
@@ -92,6 +92,7 @@ impl RunnableNode {
         key_id: String,
         bitcoind_client: Arc<Client>,
         logger: Arc<FilesystemLogger>,
+        stop: Arc<AtomicBool>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let conn = &mut db.get().unwrap();
 
@@ -401,6 +402,7 @@ impl RunnableNode {
         let peer_manager_connection_handler = peer_manager.clone();
         // generate random port number because who cares
         let listening_port: i32 = rand::thread_rng().gen_range::<i32>(1000, 65535);
+        let stop_connection_handler = stop.clone();
         tokio::spawn(async move {
             let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", listening_port))
                 .await
@@ -408,6 +410,10 @@ impl RunnableNode {
                     "Failed to bind to listen port - is something else already listening on it?",
                 );
             loop {
+                if stop_connection_handler.load(Ordering::Relaxed) {
+                    break;
+                }
+
                 let peer_mgr = peer_manager_connection_handler.clone();
                 let tcp_stream = listener.accept().await.unwrap().0;
                 tokio::spawn(async move {
@@ -433,6 +439,7 @@ impl RunnableNode {
         let chain_monitor_listener = chain_monitor.clone();
         let bitcoind_block_source = ldk_bitcoind_client.clone();
         let network = bitcoin::Network::Regtest;
+        let stop_listener = stop.clone();
         tokio::spawn(async move {
             let mut derefed = bitcoind_block_source.deref();
             let chain_poller = poll::ChainPoller::new(&mut derefed, network);
@@ -444,6 +451,9 @@ impl RunnableNode {
                 &chain_listener,
             );
             loop {
+                if stop_listener.load(Ordering::Relaxed) {
+                    break;
+                }
                 spv_client.poll_best_tip().await.unwrap();
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
@@ -476,6 +486,7 @@ impl RunnableNode {
         let background_processor_peer_manager = peer_manager.clone();
         let background_processor_channel_manager = channel_manager.clone();
         let background_chain_monitor = chain_monitor.clone();
+        let background_stop = stop.clone();
         tokio::spawn(async move {
             background_processor_logger.log(&Record::new(
                 lightning::util::logger::Level::Info,
@@ -499,21 +510,12 @@ impl RunnableNode {
                 Some(scorer.clone()),
             );
 
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
             loop {
+                if background_stop.load(Ordering::Relaxed) {
+                    break;
+                }
                 interval.tick().await;
-                // Persistence errors here are non-fatal as we can just fetch the routing graph
-                // again later, but they may indicate a disk error which could be fatal elsewhere.
-                background_processor_logger.log(&Record::new(
-                    lightning::util::logger::Level::Info,
-                    format_args!(
-                        "background processor still running for node: {}",
-                        background_processor_pubkey.clone()
-                    ),
-                    "node",
-                    "",
-                    0,
-                ));
             }
         });
 
