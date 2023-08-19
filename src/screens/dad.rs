@@ -23,9 +23,15 @@ use tui::{
     widgets::{Block, Borders},
 };
 
+#[derive(Debug, Clone)]
+pub enum MenuItemData {
+    GenericString(String),
+    NodePubkey(String), // TODO make this a proper pubkey struct
+}
+
 pub struct ParentScreen {
     pub menu_index: usize,
-    pub current_menu_list: Vec<String>,
+    pub current_menu_list: Vec<(String, MenuItemData)>,
 }
 
 impl ParentScreen {
@@ -34,8 +40,8 @@ impl ParentScreen {
             menu_index: 0,
             current_menu_list: MAIN_MENU
                 .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<String>>(),
+                .map(|x| (x.to_string(), MenuItemData::GenericString(x.to_string())))
+                .collect::<Vec<_>>(),
         }
     }
 
@@ -74,32 +80,41 @@ impl ParentScreen {
             Location::Node(_, node_sub_location) => match node_sub_location {
                 NodeSubLocation::ActionMenu => NODE_ACTION_MENU
                     .iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<String>>(),
-                NodeSubLocation::ConnectPeer => vec![], // NO LIST
-                NodeSubLocation::PayInvoice => vec![],  // NO LIST
-                NodeSubLocation::Suicide(channels) => channels,
-                NodeSubLocation::ListChannels(channels) => channels,
-                NodeSubLocation::OpenChannel(pubkeys) => pubkeys,
-                NodeSubLocation::NewAddress => vec![], // NO LIST
+                    .map(|x| (x.to_string(), MenuItemData::GenericString(x.to_string())))
+                    .collect::<Vec<_>>(),
+                NodeSubLocation::ConnectPeer => vec![],
+                NodeSubLocation::PayInvoice => vec![],
+                NodeSubLocation::Suicide(channels) => channels
+                    .iter()
+                    .map(|x| (x.to_string(), MenuItemData::GenericString(x.to_string())))
+                    .collect::<Vec<_>>(),
+                NodeSubLocation::ListChannels(channels) => channels
+                    .iter()
+                    .map(|x| (x.to_string(), MenuItemData::GenericString(x.to_string())))
+                    .collect::<Vec<_>>(),
+                NodeSubLocation::OpenChannel(pubkeys) => pubkeys
+                    .iter()
+                    .map(|x| (x.to_string(), MenuItemData::GenericString(x.to_string())))
+                    .collect::<Vec<_>>(),
+                NodeSubLocation::NewAddress => vec![],
             },
             Location::NodesList => state
                 .cached_nodes_list
                 .iter()
-                .map(String::from)
-                .collect::<Vec<String>>(),
+                .map(|x| (String::from(x), MenuItemData::NodePubkey(x.to_string())))
+                .collect::<Vec<_>>(),
             Location::Exploits => EXPLOIT_ACTION_MENU
                 .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<String>>(),
+                .map(|x| (x.to_string(), MenuItemData::GenericString(x.to_string())))
+                .collect::<Vec<_>>(),
             Location::Home => MAIN_MENU
                 .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<String>>(),
+                .map(|x| (x.to_string(), MenuItemData::GenericString(x.to_string())))
+                .collect::<Vec<_>>(),
             Location::Simulation => SIMULATION_MENU
                 .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<String>>(),
+                .map(|x| (x.to_string(), MenuItemData::GenericString(x.to_string())))
+                .collect::<Vec<_>>(),
         };
 
         self.menu_index = 0;
@@ -290,28 +305,44 @@ impl Screen for ParentScreen {
                 KeyCode::Enter => {
                     // check the context for which the user is hitting enter on
                     let current_route = state.router.get_active_block().clone();
-                    let current_item = self.current_menu_list[self.menu_index].clone();
+                    let current_item: Option<MenuItemData> = self
+                        .current_menu_list
+                        .get(self.menu_index)
+                        .map(|(_, item)| item.clone());
 
                     // apply the enter onto the active screen
                     let (new_action, new_list) = match current_route {
                         ActiveBlock::Menu => {
-                            let menu_action =
-                                current_item.parse::<MenuAction>().unwrap_or_default();
+                            let menu_action = match current_item.expect("needs item") {
+                                MenuItemData::GenericString(s) => s,
+                                _ => panic!("should be generic string"),
+                            };
+
+                            let menu_action = menu_action.parse::<MenuAction>().unwrap_or_default();
                             handle_enter_main(state, menu_action)
                         }
-                        ActiveBlock::Nodes => handle_enter_node(current_item),
+                        ActiveBlock::Nodes => handle_enter_node(current_item.expect("needs item")),
                         ActiveBlock::Main(location) => match location {
                             Location::Home => (None, None),
                             Location::NodesList => (None, None),
                             Location::Exploits => {
+                                let menu_action = match current_item.expect("needs item") {
+                                    MenuItemData::GenericString(s) => s,
+                                    _ => panic!("should be generic string"),
+                                };
+
                                 let exploit_action =
-                                    current_item.parse::<ExploitAction>().unwrap_or_default();
+                                    menu_action.parse::<ExploitAction>().unwrap_or_default();
                                 handle_enter_exploit_action(state, exploit_action).await
                             }
                             Location::Node(pubkey, sub_location) => match sub_location {
                                 NodeSubLocation::ActionMenu => {
+                                    let menu_action = match current_item.expect("needs item") {
+                                        MenuItemData::GenericString(s) => s,
+                                        _ => panic!("should be generic string"),
+                                    };
                                     let node_action =
-                                        current_item.parse::<NodeAction>().unwrap_or_default();
+                                        menu_action.parse::<NodeAction>().unwrap_or_default();
                                     handle_enter_node_action(&pubkey, state, node_action).await
                                 }
                                 NodeSubLocation::ConnectPeer => {
@@ -321,13 +352,21 @@ impl Screen for ParentScreen {
                                     handle_pay_invoice_action(&pubkey, state).await
                                 }
                                 NodeSubLocation::OpenChannel(_) => {
-                                    handle_open_channel_action(&pubkey, state, current_item).await
+                                    let menu_action = match current_item.expect("needs item") {
+                                        MenuItemData::GenericString(s) => s,
+                                        _ => panic!("should be generic string"),
+                                    };
+                                    handle_open_channel_action(&pubkey, state, menu_action).await
                                 }
                                 NodeSubLocation::Suicide(_) => {
+                                    let menu_action = match current_item.expect("needs item") {
+                                        MenuItemData::GenericString(s) => s,
+                                        _ => panic!("should be generic string"),
+                                    };
                                     handle_force_close_prev_channel_action(
                                         &pubkey,
                                         state,
-                                        current_item,
+                                        menu_action,
                                     )
                                     .await
                                 }

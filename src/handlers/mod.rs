@@ -1,4 +1,9 @@
-pub fn on_down_press_handler(selection_data: Vec<String>, selection_index: Option<usize>) -> usize {
+use crate::screens::MenuItemData;
+
+pub fn on_down_press_handler(
+    selection_data: Vec<(String, MenuItemData)>,
+    selection_index: Option<usize>,
+) -> usize {
     match selection_index {
         Some(selection_index) => {
             if !selection_data.is_empty() {
@@ -15,7 +20,10 @@ pub fn on_down_press_handler(selection_data: Vec<String>, selection_index: Optio
     }
 }
 
-pub fn on_up_press_handler(selection_data: Vec<String>, selection_index: Option<usize>) -> usize {
+pub fn on_up_press_handler(
+    selection_data: Vec<(String, MenuItemData)>,
+    selection_index: Option<usize>,
+) -> usize {
     match selection_index {
         Some(selection_index) => {
             if !selection_data.is_empty() {

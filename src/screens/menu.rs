@@ -3,6 +3,7 @@ use std::{fmt, str::FromStr};
 use crate::{
     application::AppState,
     router::{Action, ActiveBlock, Location},
+    screens::MenuItemData,
 };
 
 #[derive(Default)]
@@ -52,20 +53,19 @@ impl FromStr for MenuAction {
     }
 }
 
-// this is the entry point for setting the menu list as the active
 pub(crate) fn handle_enter_main_menu(
     state: &mut AppState,
-) -> (Option<Action>, Option<Vec<String>>) {
+) -> (Option<Action>, Option<Vec<(String, MenuItemData)>>) {
     // if the current active block is node list then do nothing
     if state.router.get_active_block() == &ActiveBlock::Menu {
         return (None, None);
     }
 
-    // set menu list to menu items
+    // set menu list to menu items with the associated data
     let new_list = MAIN_MENU
         .iter()
-        .map(|x| x.to_string())
-        .collect::<Vec<String>>();
+        .map(|x| (x.to_string(), MenuItemData::GenericString(x.to_string())))
+        .collect::<Vec<_>>();
 
     (Some(Action::Replace(Location::Home)), Some(new_list))
 }
@@ -74,7 +74,7 @@ pub(crate) fn handle_enter_main_menu(
 pub(crate) fn handle_enter_main(
     _state: &mut AppState,
     menu_action: MenuAction,
-) -> (Option<Action>, Option<Vec<String>>) {
+) -> (Option<Action>, Option<Vec<(String, MenuItemData)>>) {
     let action = match menu_action {
         MenuAction::SimulationMode => Action::Push(Location::Simulation),
         MenuAction::Exploits => Action::Push(Location::Exploits),

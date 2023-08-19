@@ -3,7 +3,7 @@ use crate::{
     application::{AppState, Toast},
     models::hex_str,
     router::{Action, Location, NodeSubLocation},
-    screens::InputMode,
+    screens::{InputMode, MenuItemData},
     widgets::{
         constants::{green, white, yellow},
         draw::draw_selectable_list,
@@ -77,12 +77,19 @@ pub const NODE_ACTION_MENU: [NodeAction; 7] = [
     NodeAction::BroadcastRevokedCommitmentTransaction,
 ];
 
-pub fn handle_enter_node(action_item: String) -> (Option<Action>, Option<Vec<String>>) {
+// enters into the specific node pubkey from the node list
+pub fn handle_enter_node(
+    pubkey: MenuItemData,
+) -> (Option<Action>, Option<Vec<(String, MenuItemData)>>) {
+    let action_item = match pubkey {
+        MenuItemData::NodePubkey(s) => s,
+        _ => panic!("should be pubkey"),
+    };
     let action = Action::Push(Location::Node(action_item, NodeSubLocation::ActionMenu));
     let new_items = NODE_ACTION_MENU
         .iter()
-        .map(|x| x.to_string())
-        .collect::<Vec<String>>();
+        .map(|x| (x.to_string(), MenuItemData::GenericString(x.to_string())))
+        .collect::<Vec<_>>();
 
     (Some(action), Some(new_items))
 }
@@ -91,7 +98,7 @@ pub async fn handle_enter_node_action(
     pubkey: &str,
     state: &mut AppState,
     node_action: NodeAction,
-) -> (Option<Action>, Option<Vec<String>>) {
+) -> (Option<Action>, Option<Vec<(String, MenuItemData)>>) {
     let action = match node_action {
         NodeAction::ConnectPeer => {
             // the next screen for connect peer will allow input
@@ -205,7 +212,7 @@ pub async fn handle_enter_node_action(
 pub async fn handle_connect_peer_action(
     pubkey: &str,
     state: &mut AppState,
-) -> (Option<Action>, Option<Vec<String>>) {
+) -> (Option<Action>, Option<Vec<(String, MenuItemData)>>) {
     let node_id = state
         .node_manager
         .lock()
@@ -251,7 +258,7 @@ pub async fn handle_connect_peer_action(
 pub async fn handle_pay_invoice_action(
     pubkey: &str,
     state: &mut AppState,
-) -> (Option<Action>, Option<Vec<String>>) {
+) -> (Option<Action>, Option<Vec<(String, MenuItemData)>>) {
     let node_id = state
         .node_manager
         .lock()
@@ -297,7 +304,7 @@ pub async fn handle_open_channel_action(
     pubkey: &str,
     state: &mut AppState,
     item_action: String,
-) -> (Option<Action>, Option<Vec<String>>) {
+) -> (Option<Action>, Option<Vec<(String, MenuItemData)>>) {
     let node_id = state
         .node_manager
         .lock()
@@ -342,7 +349,7 @@ pub async fn handle_force_close_prev_channel_action(
     pubkey: &str,
     state: &mut AppState,
     item_action: String,
-) -> (Option<Action>, Option<Vec<String>>) {
+) -> (Option<Action>, Option<Vec<(String, MenuItemData)>>) {
     let mut items = item_action.split(':');
     let counterparty_pubkey = items.next();
     let channel_id = items.next();
