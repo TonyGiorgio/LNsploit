@@ -79,7 +79,7 @@ impl ParentScreen {
                 NodeSubLocation::ConnectPeer => vec![], // NO LIST
                 NodeSubLocation::PayInvoice => vec![],  // NO LIST
                 NodeSubLocation::Suicide(channels) => channels,
-                NodeSubLocation::ListChannels => vec![], // TODO
+                NodeSubLocation::ListChannels(channels) => channels,
                 NodeSubLocation::OpenChannel(pubkeys) => pubkeys,
                 NodeSubLocation::NewAddress => vec![], // NO LIST
             },
@@ -331,7 +331,7 @@ impl Screen for ParentScreen {
                                     )
                                     .await
                                 }
-                                NodeSubLocation::ListChannels => (None, None),
+                                NodeSubLocation::ListChannels(_) => (None, None), // TODO
                                 NodeSubLocation::NewAddress => (None, None),
                             },
                             Location::Simulation => (None, None),

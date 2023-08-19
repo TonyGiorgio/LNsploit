@@ -158,7 +158,45 @@ pub async fn handle_enter_node_action(
                 NodeSubLocation::OpenChannel(peer_pubkeys),
             ))
         }
-        _ => return (None, None),
+        NodeAction::ListChannels => {
+            // no next screen, just a force close action
+            let node_id = state
+                .node_manager
+                .lock()
+                .await
+                .get_node_id_by_pubkey(pubkey)
+                .await
+                .expect("Pubkey should have corresponding node_id");
+
+            let channels = state
+                .node_manager
+                .lock()
+                .await
+                .list_channels(node_id)
+                .iter()
+                .map(|c| {
+                    c.counterparty.node_id.to_string()
+                        + ":"
+                        + String::as_str(&hex_str(&c.channel_id))
+                })
+                .collect();
+
+            state.logger.clone().log(&Record::new(
+                lightning::util::logger::Level::Debug,
+                format_args!("channels: {:?}", channels),
+                "dad",
+                "",
+                334,
+            ));
+
+            Action::Push(Location::Node(
+                pubkey.into(),
+                NodeSubLocation::ListChannels(channels),
+            ))
+        }
+        NodeAction::Invoice => return (None, None),
+        NodeAction::NewOnChainAddress => return (None, None),
+        NodeAction::Invalid => return (None, None),
     };
 
     (Some(action), None)
@@ -405,7 +443,14 @@ pub fn draw_node(
             menu_index,
             channels.clone(),
         ),
-        NodeSubLocation::ListChannels => todo!(),
+        NodeSubLocation::ListChannels(channel_ids) => draw_list_channels(
+            frame,
+            vertical_chunks[1],
+            highlight_state,
+            state,
+            menu_index,
+            channel_ids.clone(),
+        ),
         NodeSubLocation::OpenChannel(node_pubkeys) => draw_open_channel(
             frame,
             vertical_chunks[1],
@@ -577,6 +622,34 @@ fn draw_open_channel(
         chunk,
         "Select a node",
         &node_pubkeys,
+        highlight_state,
+        menu_index,
+    )
+}
+
+fn draw_list_channels(
+    frame: &mut ScreenFrame,
+    chunk: Rect,
+    highlight_state: (bool, bool),
+    _state: &AppState,
+    menu_index: Option<usize>,
+    channels: Vec<String>,
+) {
+    let _border_color_style = {
+        if highlight_state.0 {
+            yellow()
+        } else if highlight_state.1 {
+            green()
+        } else {
+            white()
+        }
+    };
+
+    draw_selectable_list(
+        frame,
+        chunk,
+        "Select a channel to view",
+        &channels,
         highlight_state,
         menu_index,
     )
