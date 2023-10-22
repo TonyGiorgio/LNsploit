@@ -454,7 +454,7 @@ impl RunnableNode {
                 if stop_listener.load(Ordering::Relaxed) {
                     break;
                 }
-                spv_client.poll_best_tip().await.unwrap();
+                let _ = spv_client.poll_best_tip().await;
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         });
