@@ -122,6 +122,11 @@ pub fn get_clipboard_provider() -> Box<dyn ClipboardProvider> {
             paste => "termux-clipboard-get";
             copy => "termux-clipboard-set";
         }
+    } else if exists("pbcopy") && exists("pbpaste") {
+        command_provider! {
+            paste => "pbpaste";
+            copy => "pbcopy";
+        }
     } else if env_var_is_set("TMUX") && exists("tmux") {
         command_provider! {
             paste => "tmux", "save-buffer", "-";
