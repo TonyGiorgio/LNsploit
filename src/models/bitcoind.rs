@@ -12,9 +12,12 @@ use bitcoin::util::address::Address;
 use bitcoin::util::taproot::{LeafVersion, TaprootBuilder};
 use bitcoin::util::uint::Uint256;
 use bitcoin::{Amount, Network, OutPoint, PackedLockTime, Script, Sequence, TxIn, TxOut, Witness};
-use bitcoincore_rpc::bitcoincore_rpc_json::{EstimateMode, FundRawTransactionOptions};
 use bitcoincore_rpc::Client;
 use bitcoincore_rpc::RpcApi;
+use bitcoincore_rpc::{
+    bitcoincore_rpc_json::{EstimateMode, FundRawTransactionOptions},
+    MineableTx,
+};
 use hex;
 use lightning::chain::chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator};
 use lightning::routing::utxo::{UtxoLookup, UtxoLookupError, UtxoResult};
@@ -414,7 +417,10 @@ pub fn broadcast_lnd_max_witness_items_exploit(
         }],
     };
 
-    match bitcoind_client.generate_block(&dummy_addr, &[&tx1, &created_tx]) {
+    match bitcoind_client.generate_block(
+        &dummy_addr,
+        &[MineableTx::RawTx(tx1), MineableTx::RawTx(created_tx)],
+    ) {
         Ok(result) => Ok(result.hash),
         Err(e) => Err(e.into()),
     }
