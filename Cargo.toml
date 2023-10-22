@@ -16,7 +16,7 @@ lightning-background-processor = { version = "0.0.116" }
 bip32 = "0.4.0"
 bitcoin = "0.29.1"
 bitcoin-bech32 = "0.12"
-bitcoincore-rpc = { git = "https://github.com/benthecarman/rust-bitcoincore-rpc", branch = "generate-block" }
+bitcoincore-rpc = { git = "https://github.com/benthecarman/rust-bitcoincore-rpc", rev = "badf7fcc8a7d996b7465c231350dbe040a201743" }
 secp256k1 = "0.24.0"
 
 anyhow    = "1.0.64"
